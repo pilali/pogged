@@ -1,0 +1,5 @@
+build/
+juce/build/
+*.so
+*.o
+node_modules/
