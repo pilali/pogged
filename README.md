@@ -16,6 +16,39 @@ Shares its engineering lineage with [Megalo](https://github.com/pilali/megalo)
 (same shared-DSP-core / thin-wrapper architecture, biquad and envelope
 components).
 
+## Controls
+
+| Control | Range | What it does |
+|---|---|---|
+| Dry | 0–200 % | Level of the untouched input (zero latency). |
+| Sub Octave | 0–200 % | −1 octave voice. |
+| Sub −2 Oct | 0–200 % | −2 octaves voice. |
+| Octave Up | 0–200 % | +1 octave voice. |
+| 2 Octaves Up | 0–200 % | +2 octaves voice. |
+| Detune | 0–25 cents | Static chorus detune on the two up voices. |
+| Attack | 0–2000 ms | Per-pick volume swell on the wet signal (0 = off). |
+| Attack Sens | 0–100 % | Onset-detector sensitivity for the swell trigger. |
+| LP Filter | 20 Hz–20 kHz | Low-pass on the wet mix (≥19 kHz = bypass). Dry is unfiltered. |
+| Resonance | Q 0.5–8 | Filter resonance. |
+| Output | 0–200 % | Master output gain into a soft clipper. |
+
+## How it works
+
+No pitch tracking. The live input is written to a ring buffer, and each octave
+voice is a 2-tap granular reader running at a fixed ratio (0.5 / 0.25 / 2 / 4)
+behind the write head, with correlation-aligned (SOLA-style) grain splicing so
+the transposed grains stay phase-coherent on any polyphonic material. The dry
+path is never delayed. See `docs/lv2-to-multiplatform.md` for the shared-core
+architecture.
+
+## Development
+
+```sh
+make audit                       # offline DSP regression suite
+npm install && npm run screenshot   # regenerate the modgui store images
+python3 tools/gen_presets.py     # regenerate LV2 preset TTLs + JUCE header
+```
+
 ---
 
 ## Build LV2 (Linux desktop)
