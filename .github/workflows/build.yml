@@ -1,0 +1,65 @@
+name: build
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+# Collapse redundant runs for the same branch (a PR fires both push and
+# pull_request; a new commit supersedes an in-flight build).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux: LV2 build + the objective sound-quality regression suite
+  # (pitch content, attack swell, level-step clicks — see tools/ and
+  # `make audit`).
+  audit-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LV2 headers
+        run: sudo apt-get update && sudo apt-get install -y lv2-dev pkg-config
+      - name: Build LV2 plugin
+        run: make
+      - name: Sound-quality audit
+        run: make audit
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (universal)
+        run: cmake -B juce/build -S juce -DCMAKE_BUILD_TYPE=Release
+             -DCOPY_AFTER_BUILD=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+      - name: Build
+        run: cmake --build juce/build --config Release --parallel
+      - name: Verify universal binary
+        run: |
+          lipo -info "juce/build/Pogged_artefacts/Release/AU/Pogged.component/Contents/MacOS/Pogged" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pogged-macOS-universal
+          path: |
+            juce/build/Pogged_artefacts/Release/AU/Pogged.component
+            juce/build/Pogged_artefacts/Release/VST3/Pogged.vst3
+            juce/build/Pogged_artefacts/Release/Standalone/Pogged.app
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B juce/build -S juce -DCMAKE_BUILD_TYPE=Release -DCOPY_AFTER_BUILD=OFF
+      - name: Build
+        run: cmake --build juce/build --config Release --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pogged-Windows
+          path: |
+            juce/build/Pogged_artefacts/Release/VST3/Pogged.vst3
+            juce/build/Pogged_artefacts/Release/Standalone/Pogged.exe

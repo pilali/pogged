@@ -1,7 +1,40 @@
 @prefix lv2:  <http://lv2plug.in/ns/lv2core#> .
+@prefix pset: <http://lv2plug.in/ns/ext/presets#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
 <https://github.com/pilali/pogged>
     a lv2:Plugin ;
     lv2:binary <pogged.so> ;
     rdfs:seeAlso <pogged.ttl> .
+
+<Classic_POG.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <Classic_POG.ttl> .
+
+<Fat_Organ.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <Fat_Organ.ttl> .
+
+<12_String.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <12_String.ttl> .
+
+<Sub_Bass.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <Sub_Bass.ttl> .
+
+<Slow_Cathedral.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <Slow_Cathedral.ttl> .
+
+<Resonant_Synth.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <Resonant_Synth.ttl> .
+
+<https://github.com/pilali/pogged> rdfs:seeAlso <modgui.ttl> .
