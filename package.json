@@ -1,0 +1,19 @@
+{
+  "name": "pogged",
+  "version": "1.0.0",
+  "description": "Pogged is a **polyphonic octave generator** for guitar (and other mono sources), inspired by the Electro-Harmonix POG2: sub octave (−1), sub −2 octaves, octave up (+1), two octaves up (+2), detune on the up voices, a pick-triggered attack/swell, and a resonant low-pass filter.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "jquery": "^4.0.0",
+    "playwright-core": "^1.61.1"
+  }
+}

@@ -1,0 +1,121 @@
+<div class="mod-pedal pogged-panel{{{cns}}}">
+
+    <div mod-role="drag-handle" class="mod-drag-handle"></div>
+
+    <!-- Brand / master bypass: click the POGGED logo to enable/disable -->
+    <div class="pogged-logo" mod-role="bypass" title="Enable / Disable">
+        <span class="pogged-logo-text">POGGED</span>
+        <div class="pogged-logo-light" mod-role="bypass-light"></div>
+    </div>
+    <div class="pogged-subtitle">polyphonic octave generator</div>
+
+    <!-- ── Fader board ─────────────────────────────────────────────
+         Each fader binds by data-handle == lv2:symbol. The cap/fill
+         position is driven by the CSS var - -value (0..1), set from JS.
+         data-scale="log" gives cutoff/Q a logarithmic drag response. -->
+    <div class="pogged-faders">
+
+        <!-- Voices -->
+        <div class="pogged-fader" data-handle="dry_level" data-min="0" data-max="2" title="Dry">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="dry_level"></span>
+            <span class="pogged-fader-label">DRY</span>
+        </div>
+        <div class="pogged-fader" data-handle="sub1_level" data-min="0" data-max="2" title="Sub Octave">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="sub1_level"></span>
+            <span class="pogged-fader-label">SUB</span>
+        </div>
+        <div class="pogged-fader" data-handle="sub2_level" data-min="0" data-max="2" title="Sub -2 Octaves">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="sub2_level"></span>
+            <span class="pogged-fader-label">SUB&nbsp;-2</span>
+        </div>
+        <div class="pogged-fader" data-handle="up1_level" data-min="0" data-max="2" title="Octave Up">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="up1_level"></span>
+            <span class="pogged-fader-label">+1&nbsp;OCT</span>
+        </div>
+        <div class="pogged-fader" data-handle="up2_level" data-min="0" data-max="2" title="Two Octaves Up">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="up2_level"></span>
+            <span class="pogged-fader-label">+2&nbsp;OCT</span>
+        </div>
+
+        <div class="pogged-group-gap"></div>
+
+        <!-- Character -->
+        <div class="pogged-fader" data-handle="detune_cents" data-min="0" data-max="25" title="Detune (up voices)">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="detune_cents"></span>
+            <span class="pogged-fader-label">DETUNE</span>
+        </div>
+        <div class="pogged-fader" data-handle="attack_ms" data-min="0" data-max="2000" data-scale="log" title="Attack swell">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="attack_ms"></span>
+            <span class="pogged-fader-label">ATTACK</span>
+        </div>
+        <div class="pogged-fader pogged-fader-small" data-handle="attack_sens" data-min="0" data-max="1" title="Attack sensitivity">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="attack_sens"></span>
+            <span class="pogged-fader-label">SENS</span>
+        </div>
+
+        <div class="pogged-group-gap"></div>
+
+        <!-- Filter + output -->
+        <div class="pogged-fader" data-handle="lp_cutoff" data-min="20" data-max="20000" data-scale="log" title="Low-pass filter">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="lp_cutoff"></span>
+            <span class="pogged-fader-label">LP&nbsp;FILT</span>
+        </div>
+        <div class="pogged-fader pogged-fader-small" data-handle="lp_q" data-min="0.5" data-max="8" data-scale="log" title="Filter resonance">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="lp_q"></span>
+            <span class="pogged-fader-label">RES</span>
+        </div>
+        <div class="pogged-fader" data-handle="out_level" data-min="0" data-max="2" title="Output level">
+            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="out_level"></span>
+            <span class="pogged-fader-label">OUT</span>
+        </div>
+
+    </div>
+
+    <div class="pogged-tooltip"></div>
+
+<div class="mod-pedal-input">
+    {{#effect.ports.audio.input}}
+    <div class="mod-input mod-input-disconnected" title="{{name}}" mod-role="input-audio-port" mod-port-symbol="{{symbol}}">
+        <div class="mod-pedal-input-image"></div>
+    </div>
+    {{/effect.ports.audio.input}}
+    {{#effect.ports.midi.input}}
+    <div class="mod-input mod-input-disconnected" title="{{name}}" mod-role="input-midi-port" mod-port-symbol="{{symbol}}">
+        <div class="mod-pedal-input-image"></div>
+    </div>
+    {{/effect.ports.midi.input}}
+    {{#effect.ports.cv.input}}
+    <div class="mod-input mod-input-disconnected" title="{{name}}" mod-role="input-cv-port" mod-port-symbol="{{symbol}}">
+        <div class="mod-pedal-input-image"></div>
+    </div>
+    {{/effect.ports.cv.input}}
+</div>
+<div class="mod-pedal-output">
+    {{#effect.ports.audio.output}}
+    <div class="mod-output mod-output-disconnected" title="{{name}}" mod-role="output-audio-port" mod-port-symbol="{{symbol}}">
+        <div class="mod-pedal-output-image"></div>
+    </div>
+    {{/effect.ports.audio.output}}
+    {{#effect.ports.midi.output}}
+    <div class="mod-output mod-output-disconnected" title="{{name}}" mod-role="output-midi-port" mod-port-symbol="{{symbol}}">
+        <div class="mod-pedal-output-image"></div>
+    </div>
+    {{/effect.ports.midi.output}}
+    {{#effect.ports.cv.output}}
+    <div class="mod-output mod-output-disconnected" title="{{name}}" mod-role="output-cv-port" mod-port-symbol="{{symbol}}">
+        <div class="mod-pedal-output-image"></div>
+    </div>
+    {{/effect.ports.cv.output}}
+</div>
+</div>

@@ -1,0 +1,159 @@
+/* ============================================================
+   POGGED — custom modgui stylesheet
+   Layout: cream EHX-style panel, one row of vertical faders
+   (voices | character | filter/out), red POGGED logo = bypass.
+   ============================================================ */
+
+@import url(/fonts/nexa/stylesheet.css);
+@import url(/fonts/questrial/stylesheet.css);
+
+/* ── Panel ──────────────────────────────────────────────── */
+.pogged-panel{{{cns}}} {
+    background: linear-gradient(180deg, #f3ead8 0%, #e8ddc4 60%, #ded1b4 100%);
+    border-radius: 14px;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.65),
+        inset 0 -2px 8px rgba(0,0,0,0.18),
+        0 4px 18px rgba(0,0,0,0.45);
+    color: #2b2622;
+    font-family: "Nexa", "Questrial", sans-serif;
+    height: 380px;
+    position: absolute;
+    width: 640px;
+    overflow: hidden;
+}
+
+/* ── POGGED brand / master bypass ───────────────────────── */
+/* Interactive zones sit at z-index >= 30, above MOD-UI's
+   .mod-drag-handle (z-index:20) which otherwise swallows clicks. */
+.pogged-panel{{{cns}}} .pogged-logo {
+    cursor: pointer;
+    left: 26px;
+    position: absolute;
+    top: 16px;
+    user-select: none;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.pogged-panel{{{cns}}} .pogged-logo-text {
+    color: #c22326;
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: 4px;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+}
+.pogged-panel{{{cns}}} .pogged-logo-light {
+    background: #601012;
+    border-radius: 50%;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+    height: 12px;
+    width: 12px;
+}
+.pogged-panel{{{cns}}} .pogged-logo-light.on {
+    background: #ff3b3e;
+    box-shadow: 0 0 10px #ff3b3e, inset 0 1px 2px rgba(0,0,0,0.25);
+}
+.pogged-panel{{{cns}}} .pogged-subtitle {
+    color: #6b6154;
+    font-size: 11px;
+    letter-spacing: 2.5px;
+    left: 28px;
+    position: absolute;
+    text-transform: uppercase;
+    top: 56px;
+}
+
+/* ── Fader board ────────────────────────────────────────── */
+.pogged-panel{{{cns}}} .pogged-faders {
+    align-items: flex-end;
+    bottom: 26px;
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    left: 24px;
+    position: absolute;
+    right: 24px;
+    top: 88px;
+    z-index: 30;
+}
+.pogged-panel{{{cns}}} .pogged-group-gap {
+    border-left: 1px solid rgba(43,38,34,0.25);
+    height: 78%;
+    margin: 0 4px;
+}
+
+.pogged-panel{{{cns}}} .pogged-fader {
+    align-items: center;
+    cursor: ns-resize;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 44px;
+}
+.pogged-panel{{{cns}}} .pogged-fader-small { width: 34px; }
+
+/* Track: dark slot; fill rises with the value; cap rides on top of it. */
+.pogged-panel{{{cns}}} .pogged-fader-track {
+    background: #2b2622;
+    border-radius: 4px;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.7);
+    flex: 1 1 auto;
+    position: relative;
+    width: 10px;
+}
+.pogged-panel{{{cns}}} .pogged-fader-fill {
+    background: linear-gradient(180deg, #e0474b, #a91d20);
+    border-radius: 0 0 4px 4px;
+    bottom: 0;
+    height: calc(var(--value, 0.5) * 100%);
+    left: 0;
+    position: absolute;
+    right: 0;
+}
+.pogged-panel{{{cns}}} .pogged-fader-cap {
+    background: linear-gradient(180deg, #fdf8ec, #cfc3a8);
+    border: 1px solid #8d8272;
+    border-radius: 3px;
+    bottom: calc(var(--value, 0.5) * 100% - 9px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.45);
+    height: 18px;
+    left: 50%;
+    margin-left: -14px;
+    position: absolute;
+    width: 28px;
+}
+.pogged-panel{{{cns}}} .pogged-fader-small .pogged-fader-cap {
+    margin-left: -11px;
+    width: 22px;
+}
+
+.pogged-panel{{{cns}}} .pogged-fader-value {
+    color: #6b6154;
+    font-size: 10px;
+    margin-top: 7px;
+    min-height: 12px;
+    white-space: nowrap;
+}
+.pogged-panel{{{cns}}} .pogged-fader-label {
+    color: #2b2622;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-top: 1px;
+    white-space: nowrap;
+}
+
+/* ── Drag tooltip ───────────────────────────────────────── */
+.pogged-panel{{{cns}}} .pogged-tooltip {
+    background: #2b2622;
+    border-radius: 4px;
+    color: #f3ead8;
+    display: none;
+    font-size: 11px;
+    padding: 3px 7px;
+    pointer-events: none;
+    position: fixed;
+    z-index: 100;
+}
