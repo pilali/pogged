@@ -40,6 +40,7 @@ components).
 | Filter Env Attack | 1–1000 ms | Sweep rise time. |
 | Filter Env Decay | 1–2000 ms | Sweep fall time. |
 | Filter Env Sens | 0–100 % | Sweep trigger sensitivity — separate from Attack Sens, as on the POG3. |
+| Range | Guitar / Baritone / Bass | Lowest note the instrument plays. Sizes the sub voices' grains, since a sub emits an octave *below* what you play (a baritone's low B lands the sub at 31 Hz). Longer grains stabilise single low notes but delay the sub and make chords ripple more — hence a switch, not an assumption. |
 | Output | 0–200 % | Master output gain into a soft clipper. |
 | Pan (×6) | L–C–R | Per-voice placement in the stereo field (dry, −1, −2, +5th, +1, +2). Centre is full level on **both** outputs, so a single output still carries everything. |
 | Spread | 0–100 % | POG3 stereo delay on the +5th/+1/+2 voices — right channel 3× longer than left (≤150 ms / ≤50 ms). The sub octaves are excluded, as on the hardware. 0 = off (bit-transparent). |

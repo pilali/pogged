@@ -121,6 +121,33 @@ static constexpr float SPREAD_R_MAX_MS = 150.0f;   // = 3x left
 // no depth in octaves — 4 is a musical full-scale sweep and is the obvious
 // knob to revisit by ear.
 static constexpr float ENV_SWEEP_OCTAVES = 4.0f;
+
+// ── Instrument range ─────────────────────────────────────────────────────────
+// The sub voices' grain has to span at least two periods of the note they
+// EMIT, not of the note played: the sub of a low E sings at 41 Hz, so it needs
+// ~49 ms of grain. Below that the correlation aligner has less than a full
+// cycle to lock onto and the splice warbles. The lowest note therefore has to
+// be a setting, not an assumption — a baritone's low B puts the sub at 31 Hz
+// (32 ms period), where a guitar-sized 55 ms grain covers only 1.7 periods.
+//
+// It costs latency: the aligner may rewind the read by up to its scan range,
+// so a longer scan delays the sub voice (guitar ~41 ms worst case, bass
+// ~105 ms). Hence a switch rather than simply sizing for the worst case.
+static inline float range_f_low(float v) noexcept {
+    switch ((int)std::clamp(v, 0.0f, 2.0f)) {
+    case 1:  return 61.74f;    // baritone, low B1
+    case 2:  return 30.87f;    // bass, low B0 (5-string)
+    default: return 82.41f;    // guitar, low E2
+    }
+}
+// Grain spans this many periods of the voice's own output; the scan covers
+// half a period, which is all the aligner needs to find the in-phase point.
+static constexpr float GRAIN_PERIODS = 2.2f;
+static constexpr float ALIGN_PERIODS = 0.5f;
+// Capped so the read stays well inside the ring and smearing stays bounded:
+// a bass's -2 voice emits 7.7 Hz, which is a rumble, not a pitch — sizing
+// grains for it would smear everything else for nothing.
+static constexpr float GRAIN_MAX_MS  = 160.0f;
 // Filter coefficients are refreshed on this stride while the sweep moves.
 // Per-sample would mean transcendentals per sample per channel; 16 samples is
 // a 3 kHz control rate at 48k, far above anything a filter sweep resolves.
@@ -150,6 +177,7 @@ struct PoggedDsp {
     float         filt_env_level = 0.0f;
     int           filt_ctr       = 0;    // coefficient-refresh stride counter
     int           cached_mode    = -1;
+    float         cached_range   = -1.0f;   // applied range_mode
 
     // Smoothed gains (per-sample one-pole, ~30 ms)
     float g_dry = 1.0f, g_sub1 = 0.0f, g_sub2 = 0.0f;
@@ -186,6 +214,26 @@ struct PoggedDsp {
     int   sil_count    = 0;       // samples of near-silence (release gate)
 };
 
+// Size each sub voice's grain and correlation scan from the note IT emits.
+// Shared by _new and process(): the two must not drift apart.
+static void setup_subs(PoggedDsp* p, float f_low, float sr) noexcept;
+
+static void setup_subs(PoggedDsp* p, float f_low, float sr) noexcept
+{
+    // Each sub emits f_low * its ratio; size from that, not from f_low.
+    const float f_out[2] = { f_low * 0.5f, f_low * 0.25f };
+    const Voice v[2]     = { V_SUB1, V_SUB2 };
+    const float ratio[2] = { 0.5f, 0.25f };
+    for (int i = 0; i < 2; ++i) {
+        const float period_ms = 1000.0f / f_out[i];
+        const int grain = (int)(0.001f * std::min(GRAIN_PERIODS * period_ms,
+                                                  GRAIN_MAX_MS) * sr);
+        const int align = (int)(0.001f * std::min(ALIGN_PERIODS * period_ms,
+                                                  GRAIN_MAX_MS * 0.5f) * sr);
+        p->sh[v[i]].setup(ratio[i], grain, align);
+    }
+}
+
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 PoggedDsp* pogged_dsp_new(double sample_rate)
 {
@@ -200,7 +248,6 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
 
     const float sr = (float)sample_rate;
     const int grain_up  = (int)(0.025f * sr);   // 25 ms — low lag, POG shimmer
-    const int grain_sub = (int)(0.055f * sr);   // 55 ms — ≥2 periods of low E
     const int align     = (int)(0.010f * sr);   // 10 ms correlation scan
 
     // Aligned respawn everywhere: without it the source-position jump at
@@ -208,8 +255,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     // at ratio 2 that is exactly half a period of the doubled fundamental,
     // so alternate grains cancel the target pitch outright. Correlation
     // alignment (SOLA-style) keeps grains phase-coherent for any input.
-    p->sh[V_SUB1].setup(0.5f,  grain_sub, align);
-    p->sh[V_SUB2].setup(0.25f, grain_sub, align);
+    setup_subs(p, range_f_low(0.0f), sr);      // guitar until told otherwise
     p->sh[V_UP5 ].setup(FIFTH_RATIO, grain_up, align);
     p->sh[V_UP1 ].setup(2.0f,  grain_up,  align);
     p->sh[V_UP2 ].setup(4.0f,  grain_up,  align);
@@ -321,6 +367,15 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float fenv_dc = std::clamp(p_->filter_env_d,  1.0f, 2000.0f);
     const float fsens   = std::clamp(p_->filter_sens,   0.0f, 1.0f);
     const bool  fenv_on = std::abs(fenv_d) > 1e-3f;   // ENV centred = off
+
+    // Re-cut the sub grains only when the range actually changes: setup()
+    // re-inits the taps when the grain length moves, which restarts the grains.
+    // That is fine for a setup switch but must not happen every block.
+    const float range_t = std::clamp(p_->range_mode, 0.0f, 2.0f);
+    if (range_t != p->cached_range) {
+        setup_subs(p, range_f_low(range_t), sr);
+        p->cached_range = range_t;
+    }
 
     const bool detune_on = det_ct > 0.5f;
     const bool env_on    = atk_ms > 1.0f;

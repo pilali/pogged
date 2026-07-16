@@ -47,7 +47,8 @@ enum Port : uint32_t {
     P_FILTER_ENV_A = 24,   // sweep attack       [1 – 1000] ms
     P_FILTER_ENV_D = 25,   // sweep decay        [1 – 2000] ms
     P_FILTER_SENS  = 26,   // sweep trigger sens [0 – 1]
-    P_COUNT        = 27
+    P_RANGE_MODE   = 27,   // 0 = guitar, 1 = baritone, 2 = bass
+    P_COUNT        = 28
 };
 
 // Control ports are 2..13 and 15..20; index 14 is audio, so the ctl[] slot at
@@ -130,6 +131,7 @@ static void run(LV2_Handle handle, uint32_t n_samples)
         ctl(p, P_FILTER_ENV_A),
         ctl(p, P_FILTER_ENV_D),
         ctl(p, P_FILTER_SENS),
+        ctl(p, P_RANGE_MODE),
     };
 
     pogged_dsp_process(p->dsp, &params, p->audio_in,

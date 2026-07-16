@@ -30,7 +30,7 @@ const PORTS = {
   pan_up5: 0.0, pan_up1: 0.0, pan_up2: 0.0,
   spread: 0.0,
   filter_mode: 0, filter_env: 0.0, filter_env_a: 50, filter_env_d: 200,
-  filter_sens: 0.5,
+  filter_sens: 0.5, range_mode: 0,
 };
 
 const PANEL_W = 760, PANEL_H = 380;

@@ -47,6 +47,11 @@ typedef struct {
     float filter_env_a;  /* idx 24 [1 – 1000]   ms, sweep attack              */
     float filter_env_d;  /* idx 25 [1 – 2000]   ms, sweep decay               */
     float filter_sens;   /* idx 26 [0 – 1]   sweep trigger sensitivity        */
+    float range_mode;    /* idx 27 [0/1/2]   instrument range: 0 = guitar (E2),
+                                             1 = baritone (B1), 2 = bass (B0).
+                                             Sizes the sub voices' grains and
+                                             correlation scan. Trades sub
+                                             latency for low-end stability.   */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

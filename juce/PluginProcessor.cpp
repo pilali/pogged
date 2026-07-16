@@ -61,6 +61,12 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     p.add(std::make_unique<AF>(pid("filter_env_d"), "Filter Env Decay",  envDcyRange, 200.0f, FA{}.withLabel("ms")));
     p.add(std::make_unique<AF>(pid("filter_sens"),  "Filter Env Sens",   Range(0.0f, 1.0f), 0.5f));
 
+    // Instrument range: sizes the sub voices' grains from the lowest note the
+    // instrument can play (a baritone's low B puts the sub at 31 Hz).
+    p.add(std::make_unique<juce::AudioParameterChoice>(
+        pid("range_mode"), "Range",
+        juce::StringArray { "Guitar", "Baritone", "Bass" }, 0));
+
     return p;
 }
 
@@ -95,6 +101,7 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pFiltEnvA = raw("filter_env_a");
     pFiltEnvD = raw("filter_env_d");
     pFiltSens = raw("filter_sens");
+    pRange    = raw("range_mode");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -146,7 +153,7 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pPanDry->load(), pPanSub1->load(), pPanSub2->load(),
         pPanUp5->load(), pPanUp1->load(), pPanUp2->load(), pSpread->load(),
         pFiltMode->load(), pFiltEnv->load(), pFiltEnvA->load(),
-        pFiltEnvD->load(), pFiltSens->load()
+        pFiltEnvD->load(), pFiltSens->load(), pRange->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.

@@ -73,6 +73,7 @@ private:
     std::atomic<float>* pFiltEnvA = nullptr;
     std::atomic<float>* pFiltEnvD = nullptr;
     std::atomic<float>* pFiltSens = nullptr;
+    std::atomic<float>* pRange    = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedAudioProcessor)
 };
