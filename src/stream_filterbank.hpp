@@ -80,7 +80,9 @@ public:
     static constexpr float F_HI  = 9000.0f;
     static constexpr float CPO   = 6.0f;    // channels per octave (log spacing)
     static constexpr float Q      = 6.0f;   // fk / bandwidth, fixed (constant-Q)
-    static constexpr float PEAK_FLOOR = 1e-4f;   // below this a channel is silence
+    static constexpr float PEAK_FLOOR = 1e-4f;   // absolute floor backstop
+    static constexpr float EMIT_REL   = 0.02f;   // emit only above 2% of the loudest channel
+    static constexpr float AMP_MS     = 3.0f;    // emitter fade time (ms), anti-click
 
     // hop_phase is accepted for signature-compatibility with StreamVocoder's
     // init(); this engine has no hop, so it is ignored.
@@ -101,6 +103,7 @@ public:
             _g[i] = 1.0f - std::exp(-two_pi * fc / _sr);
             ++_nch;
         }
+        _amp_c = 1.0f - std::exp(-1.0f / (AMP_MS * 0.001f * _sr));
         reset();
     }
 
@@ -112,6 +115,7 @@ public:
             _theta[i] = 0.0f;
             _emitting[i] = false;
             _emit[i]     = false;
+            _amp[i]      = 0.0f;
         }
         _renorm = 0;
     }
@@ -182,6 +186,19 @@ public:
         // bought a little more but every safe formulation either deadlocked a
         // straddling tone into silence or latched whole clusters on. The handoff
         // alone is robust on every |z| pattern.)
+        // ADAPTIVE FLOOR. A fixed floor (1e-4) let noise-floor channels BETWEEN
+        // the real partials become intermittent local maxima. A channel with a
+        // tiny |z| has an essentially random baseband phase, so its dφ is random
+        // and its oscillator emits broadband noise in short bursts — inaudible
+        // on 3 clean sines (the audit signals), but on a real pluck's ~8
+        // harmonics × 4 notes the sparse bank is full of such junk maxima and
+        // the sum turns to grit ("8-bit at 11 kHz"). Gating emission at a
+        // FRACTION of the loudest channel this sample kills them while tracking
+        // decay (the floor follows the signal down). Absolute floor as backstop.
+        float amax = 0.0f;
+        for (int k = 0; k < _nch; ++k) amax = std::max(amax, _a[k]);
+        const float floor = std::max(PEAK_FLOOR, EMIT_REL * amax);
+
         for (int k = 0; k < _nch; ++k) {
             const float lo = (k > 0)        ? _a[k - 1] : 0.0f;
             const float hi = (k < _nch - 1) ? _a[k + 1] : 0.0f;
@@ -190,11 +207,9 @@ public:
             // deadlock (a two-sided margin could be met by neither and silence a
             // whole note; a retention BOOST vs raw neighbours let whole clusters
             // latch on — both tried, both rejected). Mutual exclusion holds on
-            // every |z| pattern, and the phase handoff below does the smoothing
-            // that a hysteresis margin was reaching for, without its failure
-            // modes.
+            // every |z| pattern.
             const float m = _a[k];
-            _emit[k] = (m > lo) && (m >= hi) && (m > PEAK_FLOOR);
+            _emit[k] = (m > lo) && (m >= hi) && (m > floor);
         }
         for (int k = 0; k < _nch; ++k) {
             if (_emit[k] && !_emitting[k]) {              // rising edge: hand off
@@ -205,18 +220,25 @@ public:
                 if (src >= 0) _theta[k] = _theta[src];   // inherit phase
             }
         }
+        // AMPLITUDE SMOOTHING. Each channel's emitted amplitude ramps toward its
+        // target (2|z| when emitting, 0 otherwise) over ~AMP_MS, so a channel
+        // switching on or off — a genuine handoff OR a residual junk blip that
+        // slips past the floor — fades instead of stepping. A hard step is a
+        // click, and clicks are broadband: the grit again. θ keeps advancing for
+        // every channel (pass 1), so a channel ramping back up is still phase-
+        // coherent. This is the crossfade the handoff's shared phase sets up.
         float out = 0.0f;
         for (int k = 0; k < _nch; ++k) {
-            // ×2: demodulating a real cosine A·cos keeps the A/2 baseband term,
-            // so the envelope is half the real amplitude — double it back.
-            if (_emit[k]) out += 2.0f * _a[k] * std::cos(_theta[k]);
+            const float target = _emit[k] ? 2.0f * _a[k] : 0.0f;
+            _amp[k] += _amp_c * (target - _amp[k]);
+            out += _amp[k] * std::cos(_theta[k]);
             _emitting[k] = _emit[k];
         }
 
-        // One emitter per partial now, so no overlap sum to divide out. A
-        // single channel captures only part of a between-centres partial's
-        // energy, so the level runs a little low — fine for the spike's
-        // relative measurements; a per-channel gain trim is follow-up #1.
+        // One emitter per partial, so no overlap sum to divide out. A single
+        // channel captures only part of a between-centres partial's energy, so
+        // the level runs a little low — fine for the spike's relative
+        // measurements; a per-channel gain trim is follow-up #1.
         return out;
     }
 
@@ -238,4 +260,6 @@ private:
     float _a[MAXCH]     = {};                 // per-sample channel magnitude
     bool  _emitting[MAXCH] = {};              // was channel k an emitter last sample
     bool  _emit[MAXCH]     = {};              // is channel k an emitter this sample
+    float _amp[MAXCH]      = {};              // smoothed emitted amplitude
+    float _amp_c           = 0.0f;            // amplitude ramp coefficient
 };
