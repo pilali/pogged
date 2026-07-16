@@ -519,3 +519,45 @@ peu — donc :
 C'est un changement **niveau plugin** (dry retardé + onset + mixage wet), pas
 niveau moteur — à faire dans `pogged_dsp.cpp` avec un test de netteté d'attaque
 comme métrique. Prochaine étape à valider.
+
+---
+
+## 13. Latence : STFT multi-résolution (validé à l'oreille) ✓
+
+Retour d'écoute décisif sur un mix Classic POG (dry + octaves, vocodeur) : le
+timbre des voix est **propre**, mais le **décalage de 85 ms** entre l'attaque du
+dry (latence zéro) et les octaves donne une **mollesse**. C'est un problème de
+**latence**, pas de maculage. À l'A/B :
+- `N=2048` (42 ms) resserre nettement l'attaque — **préféré** — mais floute un
+  peu le grave (jugé « pas si affreux ») ;
+- le banc de filtres en mix est **inécoutable** (la décorrélation §8-§11
+  s'entend crûment) — piste définitivement écartée pour l'usage.
+
+**Solution retenue et validée : STFT multi-résolution.** Faire tourner DEUX
+fenêtres et les croiser en fréquence :
+- fenêtre **longue** (4096, ~85 ms) → **grave** (accords/subs résolus) ;
+- fenêtre **courte** (2048, ~42 ms) → **aigu + transitoires** (attaque serrée).
+
+`src/stream_vocoder.hpp` a été **templatisé** (`StreamVocoderT<N>`, alias
+`StreamVocoder` inchangé) pour que deux fenêtres coexistent. `src/stream_multi
+vocoder.hpp` (`MultiVocoder<N_LO,N_HI>`) fait tourner les deux sur le ring
+partagé et somme via un crossover **Linkwitz-Riley 4e ordre à 250 Hz** (grave du
+chemin long + aigu du chemin court). La **latence dépendante de la fréquence**
+tombe gratuitement : le grave paie 85 ms (pardonné là), les attaques passent en
+42 ms → les voix collent sous le dry.
+
+**Mesuré** (`tools/multires_test.cpp`, dans `make audit`) : sur un Mi majeur
+grave, ripple du sub **multi 3,5 dB ≈ 4096 (3,7)** et **mieux que 2048 (4,6)** —
+il garde la résolution grave de la fenêtre longue. Transposition juste à travers
+le crossover. **À l'oreille : le mix multi est le meilleur des trois** (attaque
+du 2048 + grave du 4096).
+
+### Reste à faire
+- **Réglage** : crossover (250 Hz), et l'écart de latence inter-bande (43 ms) —
+  transparent à l'oreille pour l'instant ; à ré-écouter sur d'autres matières.
+- **Intégration** : brancher `MultiVocoder` dans `pogged_dsp.cpp`. Option simple
+  — **remplacer** le chemin vocodeur par le multi-res (Focus reste binaire,
+  granulaire/vocodeur), au prix de ~1,5× le coût FFT par voix (2 FFT au lieu
+  d'1). À peser pour Pi/MOD ; le Dwarf compile déjà le vocodeur out.
+- **Coût CPU** : mesurer le pire bloc (le stagger existant aide, mais il y a 2×
+  plus de rafales FFT).

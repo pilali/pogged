@@ -55,7 +55,8 @@ BINARY  = $(BUNDLE)/pogged.so
 SOURCES = src/plugin.cpp src/glibc_compat.cpp src/pogged_dsp.cpp
 HEADERS = src/pogged_dsp.h src/stream_shifter.hpp src/onset_detector.hpp \
           src/biquad.hpp src/envelope.hpp src/freeze_loop.hpp \
-          src/stream_filterbank.hpp
+          src/stream_filterbank.hpp src/stream_vocoder.hpp \
+          src/stream_multivocoder.hpp
 
 all: $(BINARY)
 
@@ -92,6 +93,8 @@ clean:
 #                 and holds a chord's sub steadier than the granular splices
 #   arpeggio_test   — experimental spike (§1.1): a new attack must not move the
 #                 resonance of notes already ringing (filter bank vs vocoder)
+#   multires_test   — multi-resolution vocoder: keeps the long window's bass
+#                 resolution while the short window tightens attacks
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -112,6 +115,7 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/freeze_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/freeze_test
 	$(CXX) $(AUDIT_FLAGS) tools/filterbank_test.cpp -o $(AUDIT_DIR)/filterbank_test
 	$(CXX) $(AUDIT_FLAGS) tools/arpeggio_test.cpp -o $(AUDIT_DIR)/arpeggio_test
+	$(CXX) $(AUDIT_FLAGS) tools/multires_test.cpp -o $(AUDIT_DIR)/multires_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -127,6 +131,7 @@ audit: $(HEADERS)
 	@$(AUDIT_DIR)/freeze_test
 	@$(AUDIT_DIR)/filterbank_test
 	@$(AUDIT_DIR)/arpeggio_test
+	@$(AUDIT_DIR)/multires_test
 	@echo "AUDIT OK"
 
 .PHONY: audit
