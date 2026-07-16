@@ -48,7 +48,7 @@
 		pset:value 0.5
 	] , [
 		lv2:symbol "focus" ;
-		pset:value 0.0
+		pset:value 1.0
 	] , [
 		lv2:symbol "input_gain" ;
 		pset:value 1.0
@@ -100,4 +100,13 @@
 	] , [
 		lv2:symbol "up5_level" ;
 		pset:value 0.6
+	] , [
+		lv2:symbol "warp" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "warp_heel" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "warp_toe" ;
+		pset:value 12.0
 	] .

@@ -24,7 +24,7 @@ static const PresetParam kPreset0[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 20000.0f },
     { "lp_q", 0.707f },
@@ -42,6 +42,9 @@ static const PresetParam kPreset0[] = {
     { "up1_level", 0.8f },
     { "up2_level", 0.0f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // Fat Organ
@@ -58,7 +61,7 @@ static const PresetParam kPreset1[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 2500.0f },
     { "lp_q", 0.707f },
@@ -76,6 +79,9 @@ static const PresetParam kPreset1[] = {
     { "up1_level", 1.0f },
     { "up2_level", 0.7f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // 12-String
@@ -92,7 +98,7 @@ static const PresetParam kPreset2[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 8000.0f },
     { "lp_q", 0.707f },
@@ -110,6 +116,9 @@ static const PresetParam kPreset2[] = {
     { "up1_level", 0.6f },
     { "up2_level", 0.0f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // Sub Bass
@@ -126,7 +135,7 @@ static const PresetParam kPreset3[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 700.0f },
     { "lp_q", 1.2f },
@@ -144,6 +153,9 @@ static const PresetParam kPreset3[] = {
     { "up1_level", 0.0f },
     { "up2_level", 0.0f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // Slow Cathedral
@@ -160,7 +172,7 @@ static const PresetParam kPreset4[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 4000.0f },
     { "lp_q", 0.707f },
@@ -178,6 +190,9 @@ static const PresetParam kPreset4[] = {
     { "up1_level", 1.0f },
     { "up2_level", 0.9f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // Resonant Synth
@@ -194,7 +209,7 @@ static const PresetParam kPreset5[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 900.0f },
     { "lp_q", 5.0f },
@@ -212,6 +227,9 @@ static const PresetParam kPreset5[] = {
     { "up1_level", 1.0f },
     { "up2_level", 0.0f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // String Machine
@@ -228,7 +246,7 @@ static const PresetParam kPreset6[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 5000.0f },
     { "lp_q", 0.707f },
@@ -246,6 +264,9 @@ static const PresetParam kPreset6[] = {
     { "up1_level", 1.0f },
     { "up2_level", 0.5f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // Bass Synth
@@ -262,7 +283,7 @@ static const PresetParam kPreset7[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 1400.0f },
     { "lp_q", 2.2f },
@@ -280,6 +301,9 @@ static const PresetParam kPreset7[] = {
     { "up1_level", 0.3f },
     { "up2_level", 0.0f },
     { "up5_level", 0.0f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 // Quint Organ
@@ -296,7 +320,7 @@ static const PresetParam kPreset8[] = {
     { "filter_env_d", 200.0f },
     { "filter_mode", 0.0f },
     { "filter_sens", 0.5f },
-    { "focus", 0.0f },
+    { "focus", 1.0f },
     { "input_gain", 1.0f },
     { "lp_cutoff", 3000.0f },
     { "lp_q", 0.707f },
@@ -314,6 +338,9 @@ static const PresetParam kPreset8[] = {
     { "up1_level", 0.8f },
     { "up2_level", 0.3f },
     { "up5_level", 0.6f },
+    { "warp", 0.0f },
+    { "warp_heel", 0.0f },
+    { "warp_toe", 12.0f },
 };
 
 static const Preset kPresets[] = {

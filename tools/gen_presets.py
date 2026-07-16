@@ -40,13 +40,25 @@ PAN_DEFAULTS.update({"filter_mode": 0.0, "filter_env": 0.0,
                      # Range is the player's instrument, not a preset's sound:
                      # every preset ships at Guitar and the user sets it once.
                      "range_mode": 0.0,
-                     # Focus likewise: latency vs chord purity is the player's
-                     # call, not a preset's. Ships granular = the POG sound.
-                     "focus": 0.0,
+                     # Focus: the phase vocoder. The granular engine is ~3 ms
+                     # against the vocoder's ~85 ms, but it beats a chord by
+                     # +4.8 dB of ripple where the vocoder sits on the ideal
+                     # floor (+0.0) — and a POG is played on chords. The extra
+                     # latency is audible but playable, so purity wins by
+                     # default; the player can switch back per patch.
+                     #
+                     # The MOD Dwarf compiles the vocoder out entirely
+                     # (-DPOGGED_NO_VOCODER: an A35 cannot run it), so there
+                     # this port is inert and every preset plays granular.
+                     "focus": 1.0,
                      # Input gain is a rig-level trim, and the DRY buttons ship
                      # off: an untouched dry is what makes a POG a POG.
                      "input_gain": 1.0, "dry_attack": 0.0,
-                     "dry_filter": 0.0, "dry_detune": 0.0})
+                     "dry_filter": 0.0, "dry_detune": 0.0,
+                     # Warp is a performance gesture, not a sound: it ships at
+                     # the heel (= identity) with the pedal's own heel/toe
+                     # range, so a preset only arms it — the player sweeps it.
+                     "warp": 0.0, "warp_heel": 0.0, "warp_toe": 12.0})
 
 
 def P(name, **vals):
@@ -114,6 +126,7 @@ ORDER = sorted([
     "spread", "filter_mode", "filter_env", "filter_env_a", "filter_env_d",
     "filter_sens", "range_mode", "focus",
     "input_gain", "dry_attack", "dry_filter", "dry_detune",
+    "warp", "warp_heel", "warp_toe",
 ])
 
 

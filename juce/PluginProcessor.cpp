@@ -68,10 +68,12 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
         juce::StringArray { "Guitar", "Baritone", "Bass" }, 0));
 
     // FOCUS (POG3): which transposition engine. Granular is the POG sound and
-    // answers in 3 ms; the phase vocoder is clean on chords but lags ~85 ms.
+    // answers in 3 ms; the phase vocoder lags ~85 ms but sits on the ideal
+    // ripple floor where granular is +4.8 dB above it on a chord. Defaults to
+    // the vocoder, as every preset does — a POG is played on chords.
     p.add(std::make_unique<juce::AudioParameterChoice>(
         pid("focus"), "Focus",
-        juce::StringArray { "Granular (fast)", "Vocoder (clean)" }, 0));
+        juce::StringArray { "Granular (fast)", "Vocoder (clean)" }, 1));
 
     // Input gain + DRY routing (POG3). The DRY buttons send the dry through
     // each effect; all off = the POG's untouched, undelayed dry.
@@ -79,6 +81,14 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     p.add(std::make_unique<juce::AudioParameterBool>(pid("dry_attack"), "Dry: Attack", false));
     p.add(std::make_unique<juce::AudioParameterBool>(pid("dry_filter"), "Dry: Filter", false));
     p.add(std::make_unique<juce::AudioParameterBool>(pid("dry_detune"), "Dry: Detune", false));
+
+    // WARP (POG3): a whammy bend on every voice but the dry. `warp` is the
+    // expression pedal's position, which a DAW automates directly; heel and toe
+    // carry an interval each, so the sweep runs heel -> toe. Defaults are
+    // identity (pedal at heel, heel = 0 st).
+    p.add(std::make_unique<AF>(pid("warp"), "Warp", Range(0.0f, 1.0f), 0.0f));
+    p.add(std::make_unique<AF>(pid("warp_heel"), "Warp Heel", Range(-12.0f, 12.0f), 0.0f));
+    p.add(std::make_unique<AF>(pid("warp_toe"), "Warp Toe", Range(-12.0f, 12.0f), 12.0f));
 
     return p;
 }
@@ -120,6 +130,9 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pDryAtk   = raw("dry_attack");
     pDryFilt  = raw("dry_filter");
     pDryDet   = raw("dry_detune");
+    pWarp     = raw("warp");
+    pWarpHeel = raw("warp_heel");
+    pWarpToe  = raw("warp_toe");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -172,7 +185,8 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pPanUp5->load(), pPanUp1->load(), pPanUp2->load(), pSpread->load(),
         pFiltMode->load(), pFiltEnv->load(), pFiltEnvA->load(),
         pFiltEnvD->load(), pFiltSens->load(), pRange->load(), pFocus->load(),
-        pInGain->load(), pDryAtk->load(), pDryFilt->load(), pDryDet->load()
+        pInGain->load(), pDryAtk->load(), pDryFilt->load(), pDryDet->load(),
+        pWarp->load(), pWarpHeel->load(), pWarpToe->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.

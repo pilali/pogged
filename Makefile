@@ -83,6 +83,8 @@ clean:
 #   dry_test    — input gain + the three DRY routing buttons
 #   stagger_test— the vocoder's staggered hop phase does not move a voice's
 #                 latency (the invariant that lets the peak load be spread)
+#   warp_test   — POG3 WARP: the bend hits its pitch on every voice, spares the
+#                 dry, keeps warp=0 bit-identical, and grows the lag budget
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -99,6 +101,7 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/focus_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/focus_test
 	$(CXX) $(AUDIT_FLAGS) tools/dry_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/dry_test
 	$(CXX) $(AUDIT_FLAGS) tools/stagger_test.cpp -o $(AUDIT_DIR)/stagger_test
+	$(CXX) $(AUDIT_FLAGS) tools/warp_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/warp_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -110,6 +113,7 @@ audit: $(HEADERS)
 	@$(AUDIT_DIR)/focus_test
 	@$(AUDIT_DIR)/dry_test
 	@$(AUDIT_DIR)/stagger_test
+	@$(AUDIT_DIR)/warp_test
 	@echo "AUDIT OK"
 
 .PHONY: audit

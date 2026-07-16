@@ -53,7 +53,10 @@ enum Port : uint32_t {
     P_DRY_ATTACK   = 30,   // dry through attack [0/1]
     P_DRY_FILTER   = 31,   // dry through filter [0/1]
     P_DRY_DETUNE   = 32,   // dry through detune [0/1]
-    P_COUNT        = 33
+    P_WARP         = 33,   // expression position: 0 = heel, 1 = toe
+    P_WARP_HEEL    = 34,   // semitones at the heel
+    P_WARP_TOE     = 35,   // semitones at the toe
+    P_COUNT        = 36
 };
 
 // Control ports are 2..13 and 15..20; index 14 is audio, so the ctl[] slot at
@@ -142,6 +145,9 @@ static void run(LV2_Handle handle, uint32_t n_samples)
         ctl(p, P_DRY_ATTACK),
         ctl(p, P_DRY_FILTER),
         ctl(p, P_DRY_DETUNE),
+        ctl(p, P_WARP),
+        ctl(p, P_WARP_HEEL),
+        ctl(p, P_WARP_TOE),
     };
 
     pogged_dsp_process(p->dsp, &params, p->audio_in,

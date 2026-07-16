@@ -67,6 +67,23 @@ typedef struct {
                                           through SPREAD, which the manual
                                           gates on this same button. Costs the
                                           dry its zero latency.               */
+    /* POG3 WARP: "whammy style pitch bend on all voices except DRY". On the
+       pedal this rides an expression pedal, so the pedal's heel and toe each
+       get their own interval and `warp` is simply where the pedal is — which
+       maps onto a host-automated parameter directly, no reinterpretation.
+       The pedal requires FOCUS to bend +1/+2 (its POG algorithm cannot); ours
+       bends every voice in either engine, since set_ratio() exists on both. */
+    float warp;          /* idx 33 [0 – 1]   pedal position: 0 = heel, 1 = toe */
+    float warp_heel;     /* idx 34 [-12 – 12] semitones at the heel            */
+    float warp_toe;      /* idx 35 [-12 – 12] semitones at the toe. The pedal's
+                                            range is 0..+12 ("0 to 120, where
+                                            each decade is a note"); signed is
+                                            a deliberate superset — heel/toe
+                                            being independent already gives
+                                            both sweep DIRECTIONS, but not a
+                                            bend BELOW a voice's own pitch.
+                                            Defaults (heel 0, toe +12) are the
+                                            pedal's, and warp = 0 is identity. */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

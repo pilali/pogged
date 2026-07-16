@@ -79,6 +79,9 @@ private:
     std::atomic<float>* pDryAtk   = nullptr;
     std::atomic<float>* pDryFilt  = nullptr;
     std::atomic<float>* pDryDet   = nullptr;
+    std::atomic<float>* pWarp     = nullptr;
+    std::atomic<float>* pWarpHeel = nullptr;
+    std::atomic<float>* pWarpToe  = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedAudioProcessor)
 };

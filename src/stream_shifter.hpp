@@ -27,7 +27,13 @@ public:
     // (i1+2) plus a safety margin against block-boundary effects.
     static constexpr int MARGIN = 160;
 
-    // ratio        : pitch ratio, clamped [0.25, 4.0] (0.5 = -1 oct, 2 = +1 oct)
+    // Ratio limits. The voices themselves only span [0.25, 4] (-2 to +2 oct),
+    // but Warp bends them by up to an octave either way: the -2 voice reaches
+    // 0.125 and the +2 voice reaches 8.
+    static constexpr float RATIO_MIN = 0.125f;
+    static constexpr float RATIO_MAX = 8.0f;
+
+    // ratio        : pitch ratio, clamped [0.125, 8.0] (0.5 = -1 oct, 2 = +1 oct)
     // grain_samples: grain duration; the crossfade is grain/2 (Hann overlap)
     // align_range  : > 0 enables correlation-aligned respawn, scanning that
     //                many samples of extra lag (0 = free respawn)
@@ -37,11 +43,12 @@ public:
     static constexpr float RATIO_HEADROOM = 1.02f;
 
     void setup(float ratio, int grain_samples, int align_range) noexcept {
-        _ratio     = std::clamp(ratio, 0.25f, 4.0f);
+        _ratio     = std::clamp(ratio, RATIO_MIN, RATIO_MAX);
         // Fix the lag budget here, from the *base* ratio: _lag0() must not
         // follow set_ratio(), or modulating the ratio would drag the respawn
         // anchor with it and inject an unintended pitch wobble opposing the
-        // detune (measurably lopsided chorus).
+        // detune (measurably lopsided chorus). Warp changes it deliberately,
+        // through set_lag_ratio().
         _lag_ratio = _ratio * RATIO_HEADROOM;
         if (grain_samples != _grain) {
             _grain = std::max(grain_samples, 64);
@@ -56,7 +63,31 @@ public:
     // derivative steps, never the position. Deliberately leaves the lag budget
     // alone (see setup): the respawn anchor must stay put under modulation.
     void set_ratio(float ratio) noexcept {
-        _ratio = std::clamp(ratio, 0.25f, 4.0f);
+        _ratio = std::clamp(ratio, RATIO_MIN, RATIO_MAX);
+    }
+
+    // Re-size the lag budget for a SUSTAINED ratio change (Warp), which
+    // set_ratio() deliberately will not do.
+    //
+    // _lag0() must cover the ratio actually being read: an up-shifted tap eats
+    // (ratio-1)·grain of lag over a grain, so a +2 voice warped up an octave
+    // (ratio 8) needs ~7 grains of budget where its nominal ratio 4 needed 3.
+    // Read with the nominal budget it would overtake the write head and return
+    // samples that do not exist yet.
+    //
+    // This necessarily MOVES the respawn anchor, and that is precisely why
+    // set_ratio() must not do it: the detune LFO would drag the anchor in
+    // sympathy (±35 samples, measured) and fight the chorus it is creating.
+    // Warp is different in kind — the pitch is already sweeping, so a moving
+    // anchor is masked by the sweep itself. Pass the base ratio times the warp
+    // factor only; RATIO_HEADROOM still covers the LFO on top.
+    //
+    // Sizing the budget statically for the worst case instead would cost the
+    // +2 voice ~178 ms of lag permanently, warp or no warp — against ~78 ms
+    // now — which would throw away the granular engine's whole reason to exist
+    // (3 ms against the vocoder's 85 ms).
+    void set_lag_ratio(float base_ratio) noexcept {
+        _lag_ratio = std::clamp(base_ratio, RATIO_MIN, RATIO_MAX) * RATIO_HEADROOM;
     }
 
     void reset() noexcept { _init = false; }

@@ -107,6 +107,21 @@ enum Voice { V_SUB1 = 0, V_SUB2, V_UP5, V_UP1, V_UP2, V_UP1D, V_UP2D,
 // would sit ~2 cents sharp against it.
 static constexpr float FIFTH_RATIO = 1.4983070768766815f;
 
+// Nominal pitch ratio of each voice, indexed by Voice. Both engines and the
+// Warp bend read it, so it lives here once rather than as a literal at each
+// site. V_UP1D/V_UP2D carry their octave's ratio; the detune LFO and Warp
+// multiply it. V_DRYD is the dry, hence unity — and Warp leaves it alone.
+static constexpr float VOICE_RATIO[N_VOICES] = {
+    0.5f,        // V_SUB1
+    0.25f,       // V_SUB2
+    FIFTH_RATIO, // V_UP5
+    2.0f,        // V_UP1
+    4.0f,        // V_UP2
+    2.0f,        // V_UP1D
+    4.0f,        // V_UP2D
+    1.0f,        // V_DRYD
+};
+
 // POG2 detune is a chorus, not a fixed offset: the manual says pushing the
 // slider up increases "both the depth and rate of detune". So the slider maps
 // to an LFO's depth (cents) AND its rate (Hz), and the detuned voice's ratio
@@ -218,6 +233,7 @@ struct PoggedDsp {
     // Detune LFO phase, in turns [0,1). Advanced once per block: the LFO tops
     // out at 3 Hz, so even a 4096-sample block still samples it ~6x per cycle.
     float det_phase = 0.0f;
+    float g_warp_st = 0.0f;   // smoothed Warp bend, in semitones
     // Detune-mix coefficient, ramped 0 → 0.5 so enabling/disabling detune
     // crossfades the (phase-independent) detuned voice in instead of hard-
     // switching to the 50/50 average, which was an audible click.
@@ -335,15 +351,12 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
 
 #ifndef POGGED_NO_VOCODER
     // Same ratios as the shifters: FOCUS swaps the engine, not the tuning.
-    const float pv_ratio[N_VOICES] = {
-        0.5f, 0.25f, FIFTH_RATIO, 2.0f, 4.0f, 2.0f, 4.0f, 1.0f
-    };
     // Spread the voices' FFT bursts evenly across the hop so at most one lands
     // in any given audio block, instead of all N_VOICES colliding every HOP
     // samples. Same work, same sound — it is only *when* each voice computes.
     for (int v = 0; v < N_VOICES; ++v) {
         p->pv[v].init(sample_rate, v * (StreamVocoder::HOP / N_VOICES));
-        p->pv[v].set_ratio(pv_ratio[v]);
+        p->pv[v].set_ratio(VOICE_RATIO[v]);
     }
 #endif
 
@@ -390,6 +403,7 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->g_detmix      = 0.0f;
     p->g_filtmix     = 0.0f;
     p->det_phase     = 0.0f;
+    p->g_warp_st     = 0.0f;
     p->p_dry = p->p_sub1 = p->p_sub2 = 0.0f;
     p->p_up5 = p->p_up1 = p->p_up2 = 0.0f;
     p->g_spread = 0.0f;
@@ -456,6 +470,32 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const bool detune_on = det_ct > 0.5f;
     const bool env_on    = atk_ms > 1.0f;
 
+    // ── Warp: whammy-style bend on every voice except the dry ─────────────
+    // `warp` is literally where the expression pedal is; heel and toe carry an
+    // interval each, so the sweep runs heel → toe. Smoothed per block in
+    // SEMITONES (not in ratio): a listener hears pitch logarithmically, so a
+    // linear ramp in semitones is the one that sweeps evenly.
+    const float warp_p    = std::clamp(p_->warp,       0.0f, 1.0f);
+    const float warp_heel = std::clamp(p_->warp_heel, -12.0f, 12.0f);
+    const float warp_toe  = std::clamp(p_->warp_toe,  -12.0f, 12.0f);
+    const float warp_st_t = warp_heel + warp_p * (warp_toe - warp_heel);
+    const float warp_c    = 1.0f - std::exp(-(float)n_samples / (0.030f * sr));
+    p->g_warp_st += warp_c * (warp_st_t - p->g_warp_st);
+    // At rest this is exactly 1.0, so every set_*() below restores precisely
+    // what setup() had installed: warp off costs nothing and changes nothing.
+    const float warp_mult = std::pow(2.0f, p->g_warp_st * (1.0f / 12.0f));
+
+    for (int v = 0; v < N_VOICES; ++v) {
+        if (v == V_DRYD) continue;          // "all voices except DRY"
+        const float r = VOICE_RATIO[v] * warp_mult;
+        // Budget first: it must cover the ratio actually about to be read.
+        p->sh[v].set_lag_ratio(r);
+        p->sh[v].set_ratio(r);
+#ifndef POGGED_NO_VOCODER
+        p->pv[v].set_ratio(r);              // no lag budget: it translates peaks
+#endif
+    }
+
     // Detune: modulate the detuned voices' ratios with an LFO whose depth AND
     // rate both rise with the slider (POG2 behaviour — a static offset gives a
     // fixed, lifeless beating instead of a chorus). Opposite LFO signs on +1 /
@@ -467,9 +507,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->det_phase -= std::floor(p->det_phase);
         const float lfo = std::sin(6.28318531f * p->det_phase);
         const float c   = (det_ct * lfo) / 1200.0f;      // instantaneous cents
-        const float r1 = 2.0f * std::pow(2.0f,  c);
-        const float r2 = 4.0f * std::pow(2.0f, -c);
-        const float rd = std::pow(2.0f, c);         // dry copy, around unison
+        // Override the ratio the Warp loop just set, on top of the same bend
+        // (the lag budget it set from base×warp stands: RATIO_HEADROOM covers
+        // the LFO, and the anchor must not follow it — see set_lag_ratio).
+        const float r1 = VOICE_RATIO[V_UP1D] * warp_mult * std::pow(2.0f,  c);
+        const float r2 = VOICE_RATIO[V_UP2D] * warp_mult * std::pow(2.0f, -c);
+        const float rd = std::pow(2.0f, c);   // dry copy: unison, and unwarped
         p->sh[V_UP1D].set_ratio(r1);
         p->sh[V_UP2D].set_ratio(r2);
         p->sh[V_DRYD].set_ratio(rd);
