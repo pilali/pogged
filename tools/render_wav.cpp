@@ -2,8 +2,9 @@
 // and write one WAV per engine, so the spike can be judged by EAR, not only in
 // dB. Not part of `make audit` (it writes files); run it by hand:
 //
-//   g++ -O2 -std=c++17 -Isrc tools/render_wav.cpp -o build/render_wav
+//   g++ -O2 -std=c++17 -Isrc tools/render_wav.cpp src/pogged_dsp.cpp -o build/render_wav
 //   build/render_wav build/renders            # writes dry/granular/vocoder/filterbank
+//                                             #        + swell_global/swell_polyphonic
 //
 // The passage is two things the engines find hard, back to back:
 //   1. a fingerstyle ARPEGGIO — an E-major shape plucked note by note, each note
@@ -16,9 +17,16 @@
 // normalised so loudness does not confound the comparison — this deliberately
 // hides the filter bank's static colouration (follow-up #1) to isolate the
 // ARTEFACTS (ripple, pumping, disturbance) that are what we are listening for.
+//
+// The swell pair (§14) renders the WHOLE plugin (wet-only +1 oct, ATTACK
+// 500 ms) on the same arpeggio: swell_global is the granular engine's single
+// wet-bus envelope (every pluck ducks the notes still ringing), swell_
+// polyphonic the vocoder's per-bin swell (each pluck fades in on its own,
+// the ringing notes hold).
 #include "../src/stream_filterbank.hpp"
 #include "../src/stream_shifter.hpp"
 #include "../src/stream_vocoder.hpp"
+#include "../src/pogged_dsp.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -33,10 +41,9 @@ static constexpr uint32_t RSZ  = 65536, MASK = RSZ - 1;
 // One plucked string: harmonic stack with a soft attack and exponential decay,
 // added into buf starting at t0 (seconds).
 static void pluck(std::vector<float>& buf, double f0, double t0, double dur,
-                  double gain)
+                  double gain, double decay = 4.5)      // decay per second
 {
     const int start = (int)(t0 * SR), n = (int)(dur * SR);
-    const double decay = 4.5;                            // per second
     for (int i = 0; i < n && start + i < (int)buf.size(); ++i) {
         const double t = i / (double)SR;
         const double env = (1.0 - std::exp(-t / 0.004)) * std::exp(-decay * t);
@@ -109,6 +116,31 @@ static std::vector<float> run_granular(const std::vector<float>& in)
     return out;
 }
 
+// Whole-plugin render for the ATTACK swell A/B (§14): wet-only +1 octave,
+// 500 ms swell, engine picked by `focus`.
+static std::vector<float> run_plugin_swell(const std::vector<float>& in, float focus)
+{
+    PoggedDsp* dsp = pogged_dsp_new(SR);
+    PoggedParams p = {};
+    p.up1_level   = 1.0f;
+    p.out_level   = 1.0f;
+    p.input_gain  = 1.0f;
+    p.lp_cutoff   = 20000.0f;
+    p.lp_q        = 0.707f;
+    p.attack_ms   = 500.0f;
+    p.attack_sens = 0.9f;   // fingerstyle over ringing notes needs a hot trigger
+    p.focus       = focus;
+
+    const int n = (int)in.size();
+    std::vector<float> out(n), out_r(n);
+    constexpr int BLOCK = 256;
+    for (int i = 0; i < n; i += BLOCK)
+        pogged_dsp_process(dsp, &p, in.data() + i, out.data() + i, out_r.data() + i,
+                           std::min<int>(BLOCK, n - i));
+    pogged_dsp_free(dsp);
+    return out;
+}
+
 int main(int argc, char** argv)
 {
     const std::string dir = (argc > 1) ? argv[1] : "build/renders";
@@ -136,6 +168,16 @@ int main(int argc, char** argv)
         { "vocoder",    run<StreamVocoder>(in) },
         { "filterbank", run<StreamFilterbank>(in) },
     };
+
+    // The swell A/B gets a more SUSTAINED arpeggio (decay 1.2/s instead of
+    // 4.5): the criterion is what happens to notes still ringing when the
+    // next one is attacked, so the notes have to still be ringing.
+    std::vector<float> in_swell((int)(6.0 * SR), 0.0f);
+    for (int k = 0; k < 4; ++k)
+        pluck(in_swell, arp[k], 0.3 + 0.8 * k, 4.5, 0.8, 1.2);
+    normalize(in_swell);
+    outs.push_back({ "swell_global",     run_plugin_swell(in_swell, 0.0f) });  // granular, POG2 env
+    outs.push_back({ "swell_polyphonic", run_plugin_swell(in_swell, 1.0f) });  // vocoder, per-bin
 
     bool ok = true;
     for (auto& o : outs) {

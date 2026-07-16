@@ -561,3 +561,72 @@ du 2048 + grave du 4096).
   d'1). À peser pour Pi/MOD ; le Dwarf compile déjà le vocodeur out.
 - **Coût CPU** : mesurer le pire bloc (le stagger existant aide, mais il y a 2×
   plus de rafales FFT).
+
+---
+
+## 14. Spike 5 — le swell polyphonique (l'ATTACK du POG3) ✓
+
+Le critère signature restant : *« le POG3 fait un swell sur chaque attaque d'un
+arpège **sans altérer le sustain des notes précédentes** »*. Notre ATTACK ne le
+faisait pas, structurellement : une **enveloppe scalaire unique** sur tout le
+bus wet, retriggée par l'`OnsetDetector`. Sur une attaque pendant un sustain,
+elle n'a que deux issues, toutes deux fausses :
+- le détecteur **tire** → duck-puis-reswell de **tout** le bus, notes tenues
+  comprises (mesuré : la note tenue plonge de **9,4 dB**) ;
+- le détecteur **rate** (une note ajoutée sur un sustain ne monte le RMS que de
+  ~3-6 dB, sous le seuil) → la nouvelle note **ne swelle pas du tout**.
+
+Aucun réglage de sensibilité ne sort de ce dilemme : il faut une enveloppe
+**par bande**, pas par bus. (C'est d'ailleurs un indice architectural de plus
+que le POG3 est spectral à l'intérieur.)
+
+**Implémentation — swell par bin dans le vocodeur.** Le vocodeur expose déjà le
+spectre de synthèse à chaque trame ; chaque bin reçoit sa propre enveloppe
+(`_swl[k]` dans `stream_vocoder.hpp`, `set_swell(atk_ms)`) :
+- elle **suit librement vers le bas** (les décroissances naturelles et le
+  silence ne sont jamais retenus, et un bin retombé re-swelle à la prochaine
+  attaque) ;
+- elle **monte avec la constante ATTACK** (90 % en `attack_ms`, exprimée en
+  trames ; l'OLA lisse les pas inter-trames) ;
+- le gain (réel, ≤ 1) multiplie le bin **sans toucher la phase**.
+
+Une note fraîche naît dans des bins à ~0 → son énergie fade-in sur `attack_ms`.
+Les bins d'une note qui sonne sont déjà au niveau → gain 1, **rien ne bouge**.
+Le transitoire large bande du médiator qui traverse les bins d'une note tenue
+est borné par le ratio ancien/nouveau du bin — une retombée douce, pas un duck.
+Ni onset detector ni trigger : le swell est **continu et sans seuil**, donc pas
+de sensibilité à régler et pas d'attaque ratée. Désactivé, l'état continue de
+suivre le spectre (armer ATTACK en cours de note ne swelle que l'attaque
+**suivante**, pas la note déjà entendue). Coût : 2049 `abs()` par trame par
+voix — négligeable devant les 2 FFT.
+
+**Câblage** (`pogged_dsp.cpp`) : l'enveloppe globale est calculée avant les
+voix et ne s'applique plus qu'au **granulaire** (qui, sans domaine spectral,
+garde le duck-reswell POG2 — assumé, c'est le moteur « vintage ») ; le vocodeur
+swelle en interne ; `V_DRYD` est exclu (chemin dry : son swell est le bouton
+DRY ATTACK, inchangé). `StreamVocoderT` étant templatisé, le `MultiVocoder`
+(§13) hérite du mécanisme gratuitement le jour de son intégration.
+
+**Mesuré** (`tools/polyswell_test.cpp`, dans `make audit`) — A 220 Hz tenue,
+B 330 Hz attaquée dessus, ATTACK 500 ms, voix +1 oct :
+
+| Moteur | Sustain de A pendant le swell de B | Swell de B |
+|---|---|---|
+| enveloppe globale (avant) | **−9,4 dB** ✗ | 90 % en 470 ms ✓ |
+| **swell par bin (vocodeur)** | **−0,9 dB** ✓ | 90 % en 520 ms ✓ |
+| granulaire (POG2, report-only) | −9,0 dB (assumé) | 90 % en 410 ms |
+
+Le critère est asserté à −2 dB. Les 16 tests existants restent verts (le
+`swell_test` POG2 du granulaire est inchangé).
+
+### Reste à faire
+- **Écoute** : valider le rendu à l'oreille sur un arpège réel (le −0,9 dB
+  résiduel vient du transitoire de B qui traverse la bande de A ; garde de
+  60 ms dans le test). `render_wav` peut produire l'A/B.
+- **Harmoniques partagées** : deux notes à l'octave l'une de l'autre partagent
+  des bins ; la re-attaque swelle la partie **ajoutée** de ces bins (ratio
+  ancien/nouveau) — comportement doux par construction, à confirmer à l'oreille.
+- Le granulaire garde l'enveloppe globale : si le swell polyphonique doit un
+  jour exister à 3 ms de latence, c'est un banc d'enveloppes temps-réel par
+  sous-bande (les gains réels ne décorrèlent pas, contrairement aux phases des
+  Spikes 1-4) — piste ouverte, non bloquante.

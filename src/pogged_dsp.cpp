@@ -594,6 +594,15 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 
     // ── Attack envelope (A-only ADSR: decay 0, sustain 1) ─────────────────
     p->env.set(atk_ms, 0.0f, 1.0f, 60.0f, sr);
+#ifndef POGGED_NO_VOCODER
+    // The vocoder swells PER BIN instead of taking the global envelope: each
+    // attack fades in on its own bins while the notes already ringing keep
+    // their sustain (the POG3 ATTACK behaviour — see stream_vocoder.hpp).
+    // V_DRYD is excluded: it feeds the DRY path, whose swell is the DRY
+    // ATTACK button (the global envelope lerp below), not the wet envelope.
+    for (int v = 0; v < N_VOICES; ++v)
+        p->pv[v].set_swell((env_on && v != V_DRYD) ? atk_ms : 0.0f);
+#endif
     // Filter sweep envelope: AD (sustain 0) — it rises on the pick then falls
     // back to the slider's frequency, which is what a filter sweep is.
     p->filt_env.set(fenv_a, fenv_dc, 0.0f, 60.0f, sr);
@@ -670,18 +679,57 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->p_up1  += gc * (pup1_t  - p->p_up1);
         p->p_up2  += gc * (pup2_t  - p->p_up2);
 
+        // Attack/swell. The detector always runs so its RMS state is warm
+        // when the user raises attack_ms mid-note. Computed BEFORE the voices
+        // because the granular engine takes the envelope at its input: the
+        // vocoder swells per bin on its own (see set_swell above), so a
+        // global multiply on the mixed wet bus would double-swell it.
+        const bool onset = p->det.process(x, sens);
+        if (env_on) {
+            if (onset) {
+                if (p->env.is_active() && p->env_level > 0.1f) {
+                    // Re-pick during a swell: duck fast, then restart the
+                    // attack from low — every pick re-swells without a click.
+                    p->env.release_capped(5.0f, sr);
+                    p->pending_trig = (int)(0.005f * sr) + 1;
+                } else {
+                    p->env.trigger();
+                }
+            }
+            if (p->pending_trig > 0 && --p->pending_trig == 0)
+                p->env.trigger();
+            // Safety net: signal present but the envelope sits at Idle
+            // (missed onset on a legato swell, or attack enabled mid-note)
+            // — swell in rather than staying silent.
+            if (!p->env.is_active() && p->det.fast_power() > 4.0f * SIL_GATE)
+                p->env.trigger();
+            if (p->det.fast_power() < SIL_GATE) {
+                if (++p->sil_count == sil_max) p->env.release();
+            } else {
+                p->sil_count = 0;
+            }
+            p->env_level = p->env.process();
+        } else {
+            p->env_level = 1.0f;
+        }
+
         // FOCUS crossfade. Both engines run ONLY while the fade is in flight;
         // at rest (g_focus pinned at 0 or 1) exactly one does, so the idle cost
         // is one engine. The vocoder's OLA needs ~N samples to fill, which the
         // 150 ms fade covers — it ramps in from silence rather than clicking.
         p->g_focus += focus_c * (focus_t - p->g_focus);
         const float fx = p->g_focus;
+        // The wet swell per engine: granular takes the global envelope (a
+        // POG2-style duck-and-reswell on every onset), the vocoder swells per
+        // bin inside _process_frame. V_DRYD belongs to the DRY path and takes
+        // neither — its swell is the DRY ATTACK lerp further down.
         auto voice_raw = [&](Voice v) noexcept -> float {
+            const float ge = (env_on && v != V_DRYD) ? p->env_level : 1.0f;
 #ifdef POGGED_NO_VOCODER
-            return p->sh[v].process(ring, mask, p->wpos);
+            return ge * p->sh[v].process(ring, mask, p->wpos);
 #else
             float s = 0.0f;
-            if (fx < 0.9999f) s += (1.0f - fx) * p->sh[v].process(ring, mask, p->wpos);
+            if (fx < 0.9999f) s += (1.0f - fx) * ge * p->sh[v].process(ring, mask, p->wpos);
             if (fx > 1e-4f)   s += fx * p->pv[v].process(ring, mask, p->wpos);
             return s;
 #endif
@@ -774,39 +822,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             dr_dry = d + d_spread * (p->sdl_dry.read(dr_s) - d);
         }
 
-        // Attack/swell. The detector always runs so its RMS state is warm
-        // when the user raises attack_ms mid-note.
-        const bool onset = p->det.process(x, sens);
-        if (env_on) {
-            if (onset) {
-                if (p->env.is_active() && p->env_level > 0.1f) {
-                    // Re-pick during a swell: duck fast, then restart the
-                    // attack from low — every pick re-swells without a click.
-                    p->env.release_capped(5.0f, sr);
-                    p->pending_trig = (int)(0.005f * sr) + 1;
-                } else {
-                    p->env.trigger();
-                }
-            }
-            if (p->pending_trig > 0 && --p->pending_trig == 0)
-                p->env.trigger();
-            // Safety net: signal present but the envelope sits at Idle
-            // (missed onset on a legato swell, or attack enabled mid-note)
-            // — swell in rather than staying silent.
-            if (!p->env.is_active() && p->det.fast_power() > 4.0f * SIL_GATE)
-                p->env.trigger();
-            if (p->det.fast_power() < SIL_GATE) {
-                if (++p->sil_count == sil_max) p->env.release();
-            } else {
-                p->sil_count = 0;
-            }
-            p->env_level = p->env.process();
-            wet_l *= p->env_level;
-            wet_r *= p->env_level;
-        } else {
-            p->env_level = 1.0f;
-        }
         // DRY ATTACK: lerp between untouched and swelled, so the button fades.
+        // (The wet swell happened per voice in voice_raw; the envelope itself
+        // was advanced before the voices ran.)
         {
             const float e = 1.0f + p->g_dryatk * (p->env_level - 1.0f);
             dl_dry *= e; dr_dry *= e;

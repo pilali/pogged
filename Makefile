@@ -95,6 +95,9 @@ clean:
 #                 resonance of notes already ringing (filter bank vs vocoder)
 #   multires_test   — multi-resolution vocoder: keeps the long window's bass
 #                 resolution while the short window tightens attacks
+#   polyswell_test  — POG3 polyphonic ATTACK (§14): a new attack swells in on
+#                 its own bins while notes already ringing keep their sustain
+#                 (vocoder asserted; granular reported, it stays POG2-global)
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -116,6 +119,7 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/filterbank_test.cpp -o $(AUDIT_DIR)/filterbank_test
 	$(CXX) $(AUDIT_FLAGS) tools/arpeggio_test.cpp -o $(AUDIT_DIR)/arpeggio_test
 	$(CXX) $(AUDIT_FLAGS) tools/multires_test.cpp -o $(AUDIT_DIR)/multires_test
+	$(CXX) $(AUDIT_FLAGS) tools/polyswell_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/polyswell_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -132,6 +136,7 @@ audit: $(HEADERS)
 	@$(AUDIT_DIR)/filterbank_test
 	@$(AUDIT_DIR)/arpeggio_test
 	@$(AUDIT_DIR)/multires_test
+	@echo "══ polyphonic attack swell (§14) ══"; $(AUDIT_DIR)/polyswell_test
 	@echo "AUDIT OK"
 
 .PHONY: audit

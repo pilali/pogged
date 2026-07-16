@@ -67,6 +67,7 @@ public:
         std::memset(_ana_freq,  0, sizeof _ana_freq);
         for (auto& c : _ana_cx) c = {};
         std::memset(_rot,       0, sizeof _rot);
+        std::memset(_swl,       0, sizeof _swl);
         std::memset(_out_buf,   0, sizeof _out_buf);
         for (auto& c : _cx) c = {};
         _hop_cnt   = _hop_phase;   // NOT 0: a reset must not re-align the burst
@@ -79,6 +80,16 @@ public:
     // ratios, so converting through semitones would only lose precision on the
     // equal-tempered fifth.
     void set_ratio(float ratio) noexcept { _ratio = ratio; }
+
+    // Per-bin attack swell (POG3 ATTACK, polyphonic). atk_ms is the time each
+    // bin takes to cover 90 % of a level INCREASE; <= 1 disables it. Expressed
+    // per frame: the envelope advances once per hop, and the OLA smooths the
+    // per-frame steps.
+    void set_swell(float atk_ms) noexcept {
+        if (atk_ms <= 1.0f) { _swell_c = -1.0f; return; }
+        const float frames = atk_ms * 0.001f * _sr / HOP;
+        _swell_c = (frames > 1.0f) ? std::exp(-std::log(9.0f) / frames) : 0.0f;
+    }
 
     // Returns one pitch-shifted sample. Call once per output sample.
     // ring/mask/wpos: the shared live ring buffer and its absolute write count,
@@ -213,6 +224,27 @@ private:
                 }
             }
         }
+        // ── Per-bin attack swell ────────────────────────────────────────────
+        // Each bin carries its own envelope: it follows the synthesis
+        // magnitude freely DOWNWARD (decays and silence are untouched) and
+        // with the ATTACK time constant UPWARD. A fresh note's bins start
+        // near zero, so its energy fades in over attack_ms; the bins of a
+        // note already ringing sit at gain 1 and never move. That is the
+        // POG3's polyphonic ATTACK: every attack swells, the sustain of the
+        // notes underneath stays intact — a single wet-bus envelope cannot
+        // do both (it either ducks the held notes or misses the attack).
+        // While disabled the state keeps tracking, so enabling ATTACK
+        // mid-note swells only the NEXT attack, not the note already heard.
+        for (int k = 0; k < BINS; k++) {
+            const float m = std::abs(_cx[k]);
+            if (m <= _swl[k] || _swell_c < 0.0f) {
+                _swl[k] = m;
+            } else {
+                _swl[k] = m - _swell_c * (m - _swl[k]);
+                _cx[k] *= _swl[k] / m;     // real gain < 1, phase untouched
+            }
+        }
+
         // Hermitian symmetry for real output
         for (int k = BINS; k < N; k++)
             _cx[k] = std::conj(_cx[N - k]);
@@ -273,6 +305,8 @@ private:
     float _ana_freq[BINS]       = {};
     std::complex<float> _ana_cx[BINS] = {};   // de-alternated analysis lobe
     float _rot[BINS]            = {};   // per-region rotation accumulators
+    float _swl[BINS]            = {};   // per-bin swell envelope (see set_swell)
+    float _swell_c              = -1.0f;   // < 0 = swell off
     int   _peaks[BINS]          = {};   // per-frame peak list
     int   _bounds[BINS + 1]     = {};   // per-frame region boundaries
     float _out_buf[OUTBUF]      = {};
