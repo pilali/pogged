@@ -1,7 +1,9 @@
 /* ============================================================
    POGGED — custom modgui stylesheet
-   Layout: cream EHX-style panel, one row of vertical faders
-   (voices | character | filter/out), red POGGED logo = bypass.
+   Layout: cream EHX-style panel. Two rows of vertical faders —
+   voices (with pan pots) + a switch grid on top, then
+   character | warp | filter | level. Red POGGED logo = bypass.
+   The JUCE editor mirrors this layout control for control.
    ============================================================ */
 
 @import url(/fonts/nexa/stylesheet.css);
@@ -17,9 +19,9 @@
         0 4px 18px rgba(0,0,0,0.45);
     color: #2b2622;
     font-family: "Nexa", "Questrial", sans-serif;
-    height: 380px;
+    height: 560px;
     position: absolute;
-    width: 760px;
+    width: 880px;
     overflow: hidden;
 }
 
@@ -66,17 +68,105 @@
 }
 
 /* ── Fader board ────────────────────────────────────────── */
+/* Two rows at fixed tops rather than one stretched between top/bottom: the
+   rows must not resize each other, or the track lengths would drift apart
+   and the two rows would stop reading as one instrument. */
 .pogged-panel{{{cns}}} .pogged-faders {
     align-items: flex-end;
-    bottom: 26px;
     display: flex;
     gap: 12px;
-    justify-content: center;
     left: 24px;
     position: absolute;
     right: 24px;
-    top: 88px;
     z-index: 30;
+}
+.pogged-panel{{{cns}}} .pogged-row-voices {
+    height: 196px;
+    justify-content: flex-start;
+    top: 84px;
+}
+.pogged-panel{{{cns}}} .pogged-row-tone {
+    height: 208px;
+    justify-content: center;
+    top: 308px;
+}
+
+/* ── Switch grid ────────────────────────────────────────── */
+/* Rides beside the voice faders: enums and toggles, one button per value.
+   Same order and wording as the JUCE editor's. */
+.pogged-panel{{{cns}}} .pogged-switches {
+    align-self: center;
+    display: grid;
+    flex: 1 1 auto;
+    gap: 12px 16px;
+    grid-template-columns: repeat(3, 1fr);
+    margin-left: 34px;
+    min-width: 0;
+}
+/* Lamps, not an OFF/ON pair: on a pedal red means engaged, so lighting an
+   "OFF" segment reads exactly backwards. Each DRY lamp lives at the foot of
+   the column of the effect it routes (the pedal groups them under one "DRY"
+   bracket rather than in a block of their own) — so the button is next to the
+   thing it acts on. */
+.pogged-panel{{{cns}}} .pogged-lamp {
+    background: linear-gradient(180deg, #efe5d0, #d8cbb0);
+    border: 1px solid #8d8272;
+    color: #4a4238;
+    cursor: pointer;
+    flex: 1 1 0;
+    font-family: inherit;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    min-width: 0;
+    padding: 5px 0;
+}
+.pogged-panel{{{cns}}} .pogged-lamp + .pogged-lamp { border-left: none; }
+.pogged-panel{{{cns}}} .pogged-lamp:first-child { border-radius: 4px 0 0 4px; }
+.pogged-panel{{{cns}}} .pogged-lamp:last-child  { border-radius: 0 4px 4px 0; }
+.pogged-panel{{{cns}}} .pogged-lamp.is-on {
+    background: linear-gradient(180deg, #e0484a, #c22326);
+    border-color: #8e191b;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3),
+                0 0 8px rgba(194,35,38,0.45);
+    color: #fff6ee;
+}
+.pogged-panel{{{cns}}} .pogged-seg {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.pogged-panel{{{cns}}} .pogged-seg-label {
+    color: #6b6154;
+    font-size: 9px;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.pogged-panel{{{cns}}} .pogged-seg-btns { display: flex; }
+.pogged-panel{{{cns}}} .pogged-seg-btn {
+    background: linear-gradient(180deg, #efe5d0, #d8cbb0);
+    border: 1px solid #8d8272;
+    color: #4a4238;
+    cursor: pointer;
+    flex: 1 1 0;
+    font-family: inherit;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    min-width: 0;
+    padding: 5px 0;
+}
+.pogged-panel{{{cns}}} .pogged-seg-btn + .pogged-seg-btn { border-left: none; }
+.pogged-panel{{{cns}}} .pogged-seg-btn:first-child { border-radius: 4px 0 0 4px; }
+.pogged-panel{{{cns}}} .pogged-seg-btn:last-child  { border-radius: 0 4px 4px 0; }
+.pogged-panel{{{cns}}} .pogged-seg-btn.is-on {
+    background: linear-gradient(180deg, #e0484a, #c22326);
+    border-color: #8e191b;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3),
+                0 0 8px rgba(194,35,38,0.45);
+    color: #fff6ee;
 }
 .pogged-panel{{{cns}}} .pogged-group-gap {
     border-left: 1px solid rgba(43,38,34,0.25);
@@ -195,6 +285,52 @@
     letter-spacing: 0.3px;
     margin-top: 1px;
     white-space: nowrap;
+}
+
+/* Every row-2 column reserves the lamp's height whether it carries one or not,
+   so the labels sit on one line — the same reason .pogged-pan-spacer exists. */
+.pogged-panel{{{cns}}} .pogged-lamp-spacer {
+    flex: 0 0 auto;
+    height: 16px;
+    margin-top: 5px;
+}
+
+/* The column-foot DRY lamps: small, and they must not look like a fader cap. */
+.pogged-panel{{{cns}}} .pogged-fader-lamp {
+    border-radius: 3px;
+    flex: 0 0 auto;
+    font-size: 8px;
+    letter-spacing: 0.4px;
+    height: 16px;
+    line-height: 1;
+    margin-top: 5px;
+    padding: 0;
+    width: 30px;
+}
+
+/* Voice name keycap + the pot's L..R marks, as on the pedal's own panel. */
+.pogged-panel{{{cns}}} .pogged-lr {
+    color: #6b6154;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 7px;
+    justify-content: space-between;
+    letter-spacing: 0.5px;
+    margin: -4px 0 3px;
+    width: 26px;
+}
+.pogged-panel{{{cns}}} .pogged-key {
+    background: #2b2622;
+    border-radius: 3px;
+    color: #f3ead8;
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    margin-bottom: 6px;
+    padding: 2px 0;
+    text-align: center;
+    width: 34px;
 }
 
 /* ── Drag tooltip ───────────────────────────────────────── */

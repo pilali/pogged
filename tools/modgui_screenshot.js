@@ -30,11 +30,12 @@ const PORTS = {
   pan_up5: 0.0, pan_up1: 0.0, pan_up2: 0.0,
   spread: 0.0,
   filter_mode: 0, filter_env: 0.0, filter_env_a: 50, filter_env_d: 200,
-  filter_sens: 0.5, range_mode: 0, focus: 0,
+  filter_sens: 0.5, range_mode: 0, focus: 1,
   input_gain: 1.0, dry_attack: 0, dry_filter: 0, dry_detune: 0,
+  warp: 0.0, warp_heel: 0.0, warp_toe: 12.0,
 };
 
-const PANEL_W = 760, PANEL_H = 380;
+const PANEL_W = 880, PANEL_H = 560;
 
 function buildPage() {
   const dir = path.join(REPO, 'pogged.lv2', 'modgui');
