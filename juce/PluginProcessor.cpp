@@ -29,6 +29,7 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     p.add(std::make_unique<AF>(pid("sub2_level"),   "Sub -2 Oct",   Range(0.0f, 2.0f), 0.0f));
     p.add(std::make_unique<AF>(pid("up1_level"),    "Octave Up",    Range(0.0f, 2.0f), 0.8f));
     p.add(std::make_unique<AF>(pid("up2_level"),    "2 Octaves Up", Range(0.0f, 2.0f), 0.0f));
+    p.add(std::make_unique<AF>(pid("up5_level"),    "5th Up",       Range(0.0f, 2.0f), 0.0f));
     p.add(std::make_unique<AF>(pid("detune_cents"), "Detune",       Range(0.0f, 25.0f), 0.0f, FA{}.withLabel("cents")));
     p.add(std::make_unique<AF>(pid("attack_ms"),    "Attack",       atkRange, 0.0f, FA{}.withLabel("ms")));
     p.add(std::make_unique<AF>(pid("attack_sens"),  "Attack Sens",  Range(0.0f, 1.0f), 0.35f));
@@ -57,6 +58,7 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pCutoff = raw("lp_cutoff");
     pQ      = raw("lp_q");
     pOut    = raw("out_level");
+    pUp5    = raw("up5_level");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -98,10 +100,12 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     const int n = buffer.getNumSamples();
     if (dsp == nullptr || n == 0) return;
 
+    // Positional — field order must match PoggedParams (= the LV2 port order),
+    // so up5_level goes last, where it was appended.
     const PoggedParams p {
         pDry->load(), pSub1->load(), pSub2->load(), pUp1->load(), pUp2->load(),
         pDetune->load(), pAttack->load(), pSens->load(),
-        pCutoff->load(), pQ->load(), pOut->load()
+        pCutoff->load(), pQ->load(), pOut->load(), pUp5->load()
     };
 
     // Mono engine (guitar): sum the input to mono, process once, fan out.

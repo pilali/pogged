@@ -31,13 +31,32 @@ public:
     // grain_samples: grain duration; the crossfade is grain/2 (Hann overlap)
     // align_range  : > 0 enables correlation-aligned respawn, scanning that
     //                many samples of extra lag (0 = free respawn)
+    // Headroom on the lag budget, so a ratio later modulated by set_ratio()
+    // still cannot overtake the write head. 2% covers the ±25 cents (1.45%)
+    // the detune LFO can ask for.
+    static constexpr float RATIO_HEADROOM = 1.02f;
+
     void setup(float ratio, int grain_samples, int align_range) noexcept {
-        _ratio = std::clamp(ratio, 0.25f, 4.0f);
+        _ratio     = std::clamp(ratio, 0.25f, 4.0f);
+        // Fix the lag budget here, from the *base* ratio: _lag0() must not
+        // follow set_ratio(), or modulating the ratio would drag the respawn
+        // anchor with it and inject an unintended pitch wobble opposing the
+        // detune (measurably lopsided chorus).
+        _lag_ratio = _ratio * RATIO_HEADROOM;
         if (grain_samples != _grain) {
             _grain = std::max(grain_samples, 64);
             _init  = false;                     // stagger depends on grain
         }
         _align = align_range;
+    }
+
+    // Retune without disturbing the taps — for vibrato-style modulation of the
+    // ratio (the detuned voices). Safe mid-grain: rpos advances by _ratio each
+    // sample, so changing it bends the read speed continuously; only the
+    // derivative steps, never the position. Deliberately leaves the lag budget
+    // alone (see setup): the respawn anchor must stay put under modulation.
+    void set_ratio(float ratio) noexcept {
+        _ratio = std::clamp(ratio, 0.25f, 4.0f);
     }
 
     void reset() noexcept { _init = false; }
@@ -86,7 +105,7 @@ private:
     struct Tap { double rpos = 0.0; int cursor = 0; };
 
     double _lag0() const noexcept {
-        return (double)MARGIN + std::max(0.0f, _ratio - 1.0f) * (double)_grain;
+        return (double)MARGIN + std::max(0.0f, _lag_ratio - 1.0f) * (double)_grain;
     }
 
     // 4-point Catmull-Rom read at fractional absolute position (Megalo's
@@ -139,7 +158,8 @@ private:
     }
 
     Tap   _t[N_TAPS];
-    float _ratio = 1.0f;
+    float _ratio     = 1.0f;   // read speed; may be modulated per block
+    float _lag_ratio = 1.0f;   // base ratio + headroom; fixes the lag budget
     int   _grain = 1200;
     int   _align = 0;
     bool  _init  = false;

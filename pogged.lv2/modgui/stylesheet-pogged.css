@@ -70,7 +70,7 @@
     align-items: flex-end;
     bottom: 26px;
     display: flex;
-    gap: 11px;
+    gap: 10px;
     justify-content: center;
     left: 24px;
     position: absolute;
@@ -95,11 +95,11 @@
     align-items: center;
     cursor: ns-resize;
     display: flex;
-    flex: 0 0 38px;
+    flex: 0 0 36px;
     flex-direction: column;
     height: 100%;
     min-width: 0;
-    width: 38px;
+    width: 36px;
 }
 
 /* Track: dark slot; fill rises with the value; cap rides on top of it. */

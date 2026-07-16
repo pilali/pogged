@@ -2,8 +2,9 @@
 
 Pogged is a **polyphonic octave generator** for guitar (and other mono
 sources), inspired by the Electro-Harmonix POG2: sub octave (−1), sub −2
-octaves, octave up (+1), two octaves up (+2), detune on the up voices, a
-pick-triggered attack/swell, and a resonant low-pass filter.
+octaves, octave up (+1), two octaves up (+2), a chorus detune on the up
+voices, a pick-triggered attack/swell, and a resonant low-pass filter. It also
+borrows the **fifth-up voice** from the newer POG3.
 
 No pitch tracking — the whole polyphonic signal is transposed by a streaming
 granular engine (correlation-aligned grain splicing), so chords work and the
@@ -23,9 +24,10 @@ components).
 | Dry | 0–200 % | Level of the untouched input (zero latency). |
 | Sub Octave | 0–200 % | −1 octave voice. |
 | Sub −2 Oct | 0–200 % | −2 octaves voice. |
+| 5th Up | 0–200 % | Fifth above (equal-tempered). A POG3 voice. |
 | Octave Up | 0–200 % | +1 octave voice. |
 | 2 Octaves Up | 0–200 % | +2 octaves voice. |
-| Detune | 0–25 cents | Static chorus detune on the two up voices. |
+| Detune | 0–25 cents | Chorus on the +1/+2 voices. Raises the LFO's depth *and* rate together, as on the POG2. |
 | Attack | 0–2000 ms | Per-pick volume swell on the wet signal (0 = off). |
 | Attack Sens | 0–100 % | Onset-detector sensitivity for the swell trigger. |
 | LP Filter | 20 Hz–20 kHz | Low-pass on the wet mix (≥19 kHz = bypass). Dry is unfiltered. |
@@ -34,9 +36,9 @@ components).
 
 ## Presets
 
-Eight factory presets, mirroring the POG2's eight slots. They are generated
-from a single source (`tools/gen_presets.py`) into both the LV2 preset TTLs and
-the JUCE header, so a program sounds identical in MOD, a DAW, and standalone.
+Nine factory presets, generated from a single source (`tools/gen_presets.py`)
+into both the LV2 preset TTLs and the JUCE header, so a program sounds
+identical in MOD, a DAW, and standalone.
 
 | Preset | Character |
 |---|---|
@@ -48,18 +50,21 @@ the JUCE header, so a program sounds identical in MOD, a DAW, and standalone.
 | Resonant Synth | No dry, resonant filter — synth lead. |
 | String Machine | Wide detune + medium swell, no dry — ensemble strings. |
 | Bass Synth | Subs forward with a resonant filter — synth bass. |
+| Quint Organ | Fifth + octaves, the classic drawbar quint. |
 
 ## How it works
 
-No pitch tracking. The live input is written to a ring buffer, and each octave
-voice is a 2-tap granular reader running at a fixed ratio (0.5 / 0.25 / 2 / 4)
-behind the write head, with correlation-aligned (SOLA-style) grain splicing so
+No pitch tracking. The live input is written to a ring buffer, and each voice
+is a 2-tap granular reader running at a fixed ratio (0.5 / 0.25 / 2^(7/12) / 2
+/ 4) behind the write head, with correlation-aligned (SOLA-style) grain splicing so
 the transposed grains stay phase-coherent on any polyphonic material. Each
 voice then passes a fixed voicing filter — subs are gently low-passed to round
 them, ups gently high-passed to strip the splice-rate modulation — which is
 what pulls the octaves toward the POG2's character instead of sounding like raw
-transposed grains. The dry path is never delayed. See
-`docs/lv2-to-multiplatform.md` for the shared-core architecture.
+transposed grains. The detuned voices are a second reader per up-voice whose
+ratio is swept by an LFO, so the detune is a moving chorus rather than a fixed
+interval. The dry path is never delayed. See `docs/lv2-to-multiplatform.md` for
+the shared-core architecture.
 
 ## Development
 

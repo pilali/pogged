@@ -135,4 +135,17 @@
         lv2:minimum 0.0 ;
         lv2:maximum 2.0 ;
         lv2:default 1.0
+    ] ,
+
+    # ── Added after 0.2.0 ────────────────────────────────────────────────
+    # Appended rather than filed with the other voices: an index is a port's
+    # identity, and renumbering would remap state hosts have already saved.
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   13 ;
+        lv2:symbol  "up5_level" ;
+        lv2:name    "5th Up" ;
+        lv2:minimum 0.0 ;
+        lv2:maximum 2.0 ;
+        lv2:default 0.0
     ] .

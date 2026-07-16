@@ -43,4 +43,7 @@
 	] , [
 		lv2:symbol "up2_level" ;
 		pset:value 0.9
+	] , [
+		lv2:symbol "up5_level" ;
+		pset:value 0.0
 	] .

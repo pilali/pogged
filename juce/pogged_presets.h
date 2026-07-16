@@ -23,6 +23,7 @@ static const PresetParam kPreset0[] = {
     { "sub2_level", 0.0f },
     { "up1_level", 0.8f },
     { "up2_level", 0.0f },
+    { "up5_level", 0.0f },
 };
 
 // Fat Organ
@@ -38,6 +39,7 @@ static const PresetParam kPreset1[] = {
     { "sub2_level", 0.0f },
     { "up1_level", 1.0f },
     { "up2_level", 0.7f },
+    { "up5_level", 0.0f },
 };
 
 // 12-String
@@ -53,6 +55,7 @@ static const PresetParam kPreset2[] = {
     { "sub2_level", 0.0f },
     { "up1_level", 0.6f },
     { "up2_level", 0.0f },
+    { "up5_level", 0.0f },
 };
 
 // Sub Bass
@@ -68,6 +71,7 @@ static const PresetParam kPreset3[] = {
     { "sub2_level", 0.7f },
     { "up1_level", 0.0f },
     { "up2_level", 0.0f },
+    { "up5_level", 0.0f },
 };
 
 // Slow Cathedral
@@ -83,6 +87,7 @@ static const PresetParam kPreset4[] = {
     { "sub2_level", 0.0f },
     { "up1_level", 1.0f },
     { "up2_level", 0.9f },
+    { "up5_level", 0.0f },
 };
 
 // Resonant Synth
@@ -98,6 +103,7 @@ static const PresetParam kPreset5[] = {
     { "sub2_level", 0.0f },
     { "up1_level", 1.0f },
     { "up2_level", 0.0f },
+    { "up5_level", 0.0f },
 };
 
 // String Machine
@@ -113,6 +119,7 @@ static const PresetParam kPreset6[] = {
     { "sub2_level", 0.0f },
     { "up1_level", 1.0f },
     { "up2_level", 0.5f },
+    { "up5_level", 0.0f },
 };
 
 // Bass Synth
@@ -128,6 +135,23 @@ static const PresetParam kPreset7[] = {
     { "sub2_level", 0.4f },
     { "up1_level", 0.3f },
     { "up2_level", 0.0f },
+    { "up5_level", 0.0f },
+};
+
+// Quint Organ
+static const PresetParam kPreset8[] = {
+    { "attack_ms", 0.0f },
+    { "attack_sens", 0.35f },
+    { "detune_cents", 4.0f },
+    { "dry_level", 0.4f },
+    { "lp_cutoff", 3000.0f },
+    { "lp_q", 0.707f },
+    { "out_level", 1.0f },
+    { "sub1_level", 0.9f },
+    { "sub2_level", 0.0f },
+    { "up1_level", 0.8f },
+    { "up2_level", 0.3f },
+    { "up5_level", 0.6f },
 };
 
 static const Preset kPresets[] = {
@@ -139,8 +163,9 @@ static const Preset kPresets[] = {
     { "Resonant Synth", kPreset5, (int) (sizeof(kPreset5) / sizeof(kPreset5[0])) },
     { "String Machine", kPreset6, (int) (sizeof(kPreset6) / sizeof(kPreset6[0])) },
     { "Bass Synth", kPreset7, (int) (sizeof(kPreset7) / sizeof(kPreset7[0])) },
+    { "Quint Organ", kPreset8, (int) (sizeof(kPreset8) / sizeof(kPreset8[0])) },
 };
 
-static constexpr int kNumPresets = 8;
+static constexpr int kNumPresets = 9;
 
 } // namespace pogged

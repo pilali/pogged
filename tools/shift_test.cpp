@@ -38,7 +38,8 @@ static bool run_voice(const char* name, int voice_idx, float target_hz,
     p.lp_cutoff   = 20000.0f;
     p.lp_q        = 0.707f;
     p.attack_sens = 0.35f;
-    float* levels[4] = { &p.sub1_level, &p.sub2_level, &p.up1_level, &p.up2_level };
+    float* levels[5] = { &p.sub1_level, &p.sub2_level, &p.up1_level,
+                         &p.up2_level, &p.up5_level };
     *levels[voice_idx] = 1.0f;
 
     std::vector<float> in(N), out(N);
@@ -86,6 +87,8 @@ int main()
     ok &= run_voice("sub2 (-2)",  1, FIN * 0.25f, true);
     ok &= run_voice("up1  (+1)",  2, FIN * 2.0f,  false);
     ok &= run_voice("up2  (+2)",  3, FIN * 4.0f,  false);
+    // +5th: equal-tempered, 2^(7/12) — see FIFTH_RATIO in pogged_dsp.cpp.
+    ok &= run_voice("up5  (+5th)", 4, FIN * 1.4983071f, false);
     std::printf("shift_test: %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }

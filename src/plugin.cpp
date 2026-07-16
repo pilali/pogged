@@ -22,13 +22,16 @@ enum Port : uint32_t {
     P_SUB2_LEVEL   =  4,   // -2 octaves          [0 – 2]
     P_UP1_LEVEL    =  5,   // +1 octave           [0 – 2]
     P_UP2_LEVEL    =  6,   // +2 octaves          [0 – 2]
-    P_DETUNE_CT    =  7,   // up-voice detune     [0 – 25] cents
+    P_DETUNE_CT    =  7,   // +1/+2 detune        [0 – 25] cents
     P_ATTACK_MS    =  8,   // swell attack        [0 – 2000] ms
     P_ATTACK_SENS  =  9,   // onset sensitivity   [0 – 1]
     P_LP_CUTOFF    = 10,   // LP filter cutoff    [20 – 20000] Hz
     P_LP_Q         = 11,   // LP resonance        [0.5 – 8]
     P_OUT_LEVEL    = 12,   // output gain         [0 – 2]
-    P_COUNT        = 13
+    // Appended, not inserted: a port's index is its identity, so renumbering
+    // would silently remap state a host already saved.
+    P_UP5_LEVEL    = 13,   // +5th (POG3 voice)   [0 – 2]
+    P_COUNT        = 14
 };
 
 static constexpr uint32_t N_CTL = P_COUNT - 2;
@@ -93,6 +96,7 @@ static void run(LV2_Handle handle, uint32_t n_samples)
         ctl(p, P_LP_CUTOFF),
         ctl(p, P_LP_Q),
         ctl(p, P_OUT_LEVEL),
+        ctl(p, P_UP5_LEVEL),
     };
 
     pogged_dsp_process(p->dsp, &params, p->audio_in, p->audio_out, n_samples);

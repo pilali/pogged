@@ -59,6 +59,7 @@ private:
     std::atomic<float>* pCutoff = nullptr;
     std::atomic<float>* pQ      = nullptr;
     std::atomic<float>* pOut    = nullptr;
+    std::atomic<float>* pUp5    = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedAudioProcessor)
 };

@@ -21,7 +21,8 @@ URI  = "https://github.com/pilali/pogged"
 # ── Preset definitions ─────────────────────────────────────────────────────
 # Symbols / ranges mirror pogged.ttl:
 #   dry_level 0..2   sub1_level 0..2   sub2_level 0..2
-#   up1_level 0..2   up2_level 0..2    detune_cents 0..25
+#   up1_level 0..2   up2_level 0..2    up5_level 0..2
+#   detune_cents 0..25
 #   attack_ms 0..2000   attack_sens 0..1
 #   lp_cutoff 20..20000   lp_q 0.5..8   out_level 0..2
 
@@ -31,49 +32,59 @@ def P(name, **vals):
 PRESETS = [
     P("Classic POG",
       dry_level=1.0, sub1_level=0.8, sub2_level=0.0, up1_level=0.8, up2_level=0.0,
-      detune_cents=0.0, attack_ms=0.0, attack_sens=0.35,
+      up5_level=0.0, detune_cents=0.0, attack_ms=0.0, attack_sens=0.35,
       lp_cutoff=20000, lp_q=0.707, out_level=1.0),
 
     P("Fat Organ",
       dry_level=0.3, sub1_level=1.0, sub2_level=0.0, up1_level=1.0, up2_level=0.7,
-      detune_cents=6.0, attack_ms=0.0, attack_sens=0.35,
+      up5_level=0.0, detune_cents=6.0, attack_ms=0.0, attack_sens=0.35,
       lp_cutoff=2500, lp_q=0.707, out_level=1.0),
 
     P("12-String",
       dry_level=1.0, sub1_level=0.0, sub2_level=0.0, up1_level=0.6, up2_level=0.0,
-      detune_cents=9.0, attack_ms=0.0, attack_sens=0.35,
+      up5_level=0.0, detune_cents=9.0, attack_ms=0.0, attack_sens=0.35,
       lp_cutoff=8000, lp_q=0.707, out_level=1.0),
 
     P("Sub Bass",
       dry_level=0.6, sub1_level=1.4, sub2_level=0.7, up1_level=0.0, up2_level=0.0,
-      detune_cents=0.0, attack_ms=0.0, attack_sens=0.35,
+      up5_level=0.0, detune_cents=0.0, attack_ms=0.0, attack_sens=0.35,
       lp_cutoff=700, lp_q=1.2, out_level=1.0),
 
     P("Slow Cathedral",
       dry_level=0.5, sub1_level=0.6, sub2_level=0.0, up1_level=1.0, up2_level=0.9,
-      detune_cents=5.0, attack_ms=900, attack_sens=0.4,
+      up5_level=0.0, detune_cents=5.0, attack_ms=900, attack_sens=0.4,
       lp_cutoff=4000, lp_q=0.707, out_level=1.0),
 
     P("Resonant Synth",
       dry_level=0.0, sub1_level=1.0, sub2_level=0.0, up1_level=1.0, up2_level=0.0,
-      detune_cents=0.0, attack_ms=0.0, attack_sens=0.35,
+      up5_level=0.0, detune_cents=0.0, attack_ms=0.0, attack_sens=0.35,
       lp_cutoff=900, lp_q=5.0, out_level=1.0),
 
     P("String Machine",
       dry_level=0.0, sub1_level=0.5, sub2_level=0.0, up1_level=1.0, up2_level=0.5,
-      detune_cents=14.0, attack_ms=350, attack_sens=0.45,
+      up5_level=0.0, detune_cents=14.0, attack_ms=350, attack_sens=0.45,
       lp_cutoff=5000, lp_q=0.707, out_level=1.0),
 
     P("Bass Synth",
       dry_level=0.4, sub1_level=1.2, sub2_level=0.4, up1_level=0.3, up2_level=0.0,
-      detune_cents=0.0, attack_ms=0.0, attack_sens=0.3,
+      up5_level=0.0, detune_cents=0.0, attack_ms=0.0, attack_sens=0.3,
       lp_cutoff=1400, lp_q=2.2, out_level=1.0),
+
+    # Showcases the +5th (a POG3 voice, absent from the POG2). The quint is
+    # the classic drawbar-organ interval, so it earns its slot rather than
+    # just demonstrating the feature. Ninth preset: the bank no longer mirrors
+    # the POG2's eight slots now that it carries a POG3 voice.
+    P("Quint Organ",
+      dry_level=0.4, sub1_level=0.9, sub2_level=0.0, up1_level=0.8, up2_level=0.3,
+      up5_level=0.6, detune_cents=4.0, attack_ms=0.0, attack_sens=0.35,
+      lp_cutoff=3000, lp_q=0.707, out_level=1.0),
 ]
 
 # Symbols emitted in each .ttl preset (alphabetical, LV2 convention).
 ORDER = sorted([
     "dry_level", "sub1_level", "sub2_level", "up1_level", "up2_level",
-    "detune_cents", "attack_ms", "attack_sens", "lp_cutoff", "lp_q", "out_level",
+    "up5_level", "detune_cents", "attack_ms", "attack_sens", "lp_cutoff",
+    "lp_q", "out_level",
 ])
 
 TTL_PREFIX = """\

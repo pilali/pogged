@@ -1,11 +1,12 @@
 // Pogged — POG2-style polyphonic octave generator, host-agnostic DSP core.
 //
-// Live mono input is written to a ring buffer; up to six StreamShifters read
-// behind the write head (sub -1/-2 oct, +1/+2 oct, plus a detuned pair on the
-// up voices). The wet mix goes through the attack/swell envelope and the
-// resonant low-pass, then joins the *undelayed* dry path: the POG's defining
-// trait is a zero-latency dry signal, and since every wet voice sits at a
-// different frequency there is no unison to comb-filter against.
+// Live mono input is written to a ring buffer; up to seven StreamShifters read
+// behind the write head (sub -1/-2 oct, +5th, +1/+2 oct, plus an LFO-detuned
+// pair on the +1/+2 voices). The wet mix goes through the attack/swell
+// envelope and the resonant low-pass, then joins the *undelayed* dry path:
+// the POG's defining trait is a zero-latency dry signal, and since every wet
+// voice sits at a different frequency there is no unison to comb-filter
+// against.
 #include "pogged_dsp.h"
 #include "stream_shifter.hpp"
 #include "onset_detector.hpp"
@@ -68,7 +69,23 @@ static inline uint32_t next_pow2(uint32_t v) noexcept {
 }
 
 // ── Voice bank layout ────────────────────────────────────────────────────────
-enum Voice { V_SUB1 = 0, V_SUB2, V_UP1, V_UP2, V_UP1D, V_UP2D, N_VOICES };
+// Internal ordering only — nothing persists these, so they are free to be
+// grouped logically (the LV2 port order is fixed separately in pogged_dsp.h).
+enum Voice { V_SUB1 = 0, V_SUB2, V_UP5, V_UP1, V_UP2, V_UP1D, V_UP2D, N_VOICES };
+
+// Perfect fifth, equal-tempered (2^(7/12)) rather than the just 3:2 = 1.5.
+// The voice transposes the whole polyphonic signal, so an ET ratio keeps the
+// shifted chord in tune with the (ET) instrument playing it; the just ratio
+// would sit ~2 cents sharp against it.
+static constexpr float FIFTH_RATIO = 1.4983070768766815f;
+
+// POG2 detune is a chorus, not a fixed offset: the manual says pushing the
+// slider up increases "both the depth and rate of detune". So the slider maps
+// to an LFO's depth (cents) AND its rate (Hz), and the detuned voice's ratio
+// is modulated around its octave. Rate range is not published — these are
+// tuned by ear for a POG2-ish shimmer and are the obvious knobs to revisit.
+static constexpr float DET_RATE_MIN = 0.25f;   // Hz, at the smallest detune
+static constexpr float DET_RATE_MAX = 3.0f;    // Hz, at detune = 25 cents
 
 struct PoggedDsp {
     double sample_rate = 48000.0;
@@ -87,7 +104,10 @@ struct PoggedDsp {
 
     // Smoothed gains (per-sample one-pole, ~30 ms)
     float g_dry = 1.0f, g_sub1 = 0.0f, g_sub2 = 0.0f;
-    float g_up1 = 0.0f, g_up2 = 0.0f, g_out = 1.0f;
+    float g_up1 = 0.0f, g_up2 = 0.0f, g_up5 = 0.0f, g_out = 1.0f;
+    // Detune LFO phase, in turns [0,1). Advanced once per block: the LFO tops
+    // out at 3 Hz, so even a 4096-sample block still samples it ~6x per cycle.
+    float det_phase = 0.0f;
     // Detune-mix coefficient, ramped 0 → 0.5 so enabling/disabling detune
     // crossfades the (phase-independent) detuned voice in instead of hard-
     // switching to the 50/50 average, which was an audible click.
@@ -131,6 +151,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     // alignment (SOLA-style) keeps grains phase-coherent for any input.
     p->sh[V_SUB1].setup(0.5f,  grain_sub, align);
     p->sh[V_SUB2].setup(0.25f, grain_sub, align);
+    p->sh[V_UP5 ].setup(FIFTH_RATIO, grain_up, align);
     p->sh[V_UP1 ].setup(2.0f,  grain_up,  align);
     p->sh[V_UP2 ].setup(4.0f,  grain_up,  align);
     p->sh[V_UP1D].setup(2.0f,  grain_up,  align);
@@ -144,9 +165,12 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     //          up-transposition leaves at the grain-splice rate, which a real
     //          POG octave-up does not have.
     // Q = 0.707 (Butterworth, no resonant colouration). Not user-exposed.
+    // The +5th only shifts 7 semitones, so its splice-rate modulation is
+    // milder than the octaves' — it gets a correspondingly lower HP.
     const float ny = std::min(sr * 0.499f, 20000.0f);
     p->vfilt[V_SUB1].setup(Biquad::LP, std::min(3500.0f, ny), 0.707f, sr);
     p->vfilt[V_SUB2].setup(Biquad::LP, std::min(2000.0f, ny), 0.707f, sr);
+    p->vfilt[V_UP5 ].setup(Biquad::HP, 100.0f, 0.707f, sr);
     p->vfilt[V_UP1 ].setup(Biquad::HP, 140.0f, 0.707f, sr);
     p->vfilt[V_UP2 ].setup(Biquad::HP, 220.0f, 0.707f, sr);
     p->vfilt[V_UP1D].setup(Biquad::HP, 140.0f, 0.707f, sr);
@@ -182,6 +206,7 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->sil_count     = 0;
     p->g_detmix      = 0.0f;
     p->g_filtmix     = 0.0f;
+    p->det_phase     = 0.0f;
 }
 
 // ── Processing ───────────────────────────────────────────────────────────────
@@ -197,6 +222,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float sub2_t  = std::clamp(p_->sub2_level,   0.0f, 2.0f);
     const float up1_t   = std::clamp(p_->up1_level,    0.0f, 2.0f);
     const float up2_t   = std::clamp(p_->up2_level,    0.0f, 2.0f);
+    const float up5_t   = std::clamp(p_->up5_level,    0.0f, 2.0f);
     const float det_ct  = std::clamp(p_->detune_cents, 0.0f, 25.0f);
     const float atk_ms  = std::clamp(p_->attack_ms,    0.0f, 2000.0f);
     const float sens    = std::clamp(p_->attack_sens,  0.0f, 1.0f);
@@ -207,28 +233,35 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const bool detune_on = det_ct > 0.5f;
     const bool env_on    = atk_ms > 1.0f;
 
-    // Detuned up-voice ratios: static offset, opposite signs on +1 / +2 for
-    // a wider chorus (per-block pow is fine).
+    // Detune: modulate the detuned voices' ratios with an LFO whose depth AND
+    // rate both rise with the slider (POG2 behaviour — a static offset gives a
+    // fixed, lifeless beating instead of a chorus). Opposite LFO signs on +1 /
+    // +2 so the two voices drift apart rather than in parallel. Advanced once
+    // per block; the pow/sin cost is per-block, not per-sample.
     if (detune_on) {
-        const float c = det_ct / 1200.0f;
-        const int grain_up = (int)(0.025f * sr);
-        const int align    = (int)(0.010f * sr);
-        p->sh[V_UP1D].setup(2.0f * std::pow(2.0f,  c), grain_up, align);
-        p->sh[V_UP2D].setup(4.0f * std::pow(2.0f, -c), grain_up, align);
+        const float rate = DET_RATE_MIN + (det_ct / 25.0f) * (DET_RATE_MAX - DET_RATE_MIN);
+        p->det_phase += rate * (float)n_samples / sr;
+        p->det_phase -= std::floor(p->det_phase);
+        const float lfo = std::sin(6.28318531f * p->det_phase);
+        const float c   = (det_ct * lfo) / 1200.0f;      // instantaneous cents
+        p->sh[V_UP1D].set_ratio(2.0f * std::pow(2.0f,  c));
+        p->sh[V_UP2D].set_ratio(4.0f * std::pow(2.0f, -c));
     }
 
     // Which shifters run this block. A voice is live while its target OR its
     // smoothed gain is audible, so it fades out before being skipped.
-    const bool act[N_VOICES] = {
-        sub1_t > 1e-4f || p->g_sub1 > 1e-4f,
-        sub2_t > 1e-4f || p->g_sub2 > 1e-4f,
-        up1_t  > 1e-4f || p->g_up1  > 1e-4f,
-        up2_t  > 1e-4f || p->g_up2  > 1e-4f,
-        // Detuned voices stay alive while the detune-mix is still ramping
-        // down, so their contribution can fade out continuously.
-        (detune_on || p->g_detmix > 1e-4f) && (up1_t > 1e-4f || p->g_up1 > 1e-4f),
-        (detune_on || p->g_detmix > 1e-4f) && (up2_t > 1e-4f || p->g_up2 > 1e-4f),
-    };
+    // Assigned by index, not as a positional list: the enum is free to be
+    // reordered and this cannot silently fall out of step with it.
+    bool act[N_VOICES] = {};
+    act[V_SUB1] = sub1_t > 1e-4f || p->g_sub1 > 1e-4f;
+    act[V_SUB2] = sub2_t > 1e-4f || p->g_sub2 > 1e-4f;
+    act[V_UP5 ] = up5_t  > 1e-4f || p->g_up5  > 1e-4f;
+    act[V_UP1 ] = up1_t  > 1e-4f || p->g_up1  > 1e-4f;
+    act[V_UP2 ] = up2_t  > 1e-4f || p->g_up2  > 1e-4f;
+    // Detuned voices stay alive while the detune-mix is still ramping down, so
+    // their contribution can fade out continuously.
+    act[V_UP1D] = (detune_on || p->g_detmix > 1e-4f) && act[V_UP1];
+    act[V_UP2D] = (detune_on || p->g_detmix > 1e-4f) && act[V_UP2];
     for (int v = 0; v < N_VOICES; ++v) {
         if (act[v] && !p->sh_live[v]) {                    // fresh grains
             p->sh[v].reset();
@@ -284,6 +317,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->g_sub2 += gc * (sub2_t - p->g_sub2);
         p->g_up1  += gc * (up1_t  - p->g_up1);
         p->g_up2  += gc * (up2_t  - p->g_up2);
+        p->g_up5  += gc * (up5_t  - p->g_up5);
         p->g_out  += gc * (out_t  - p->g_out);
         p->g_detmix += gc * ((detune_on ? 0.5f : 0.0f) - p->g_detmix);
         const float m = p->g_detmix;
@@ -296,6 +330,10 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             wet += p->g_sub1 * p->vfilt[V_SUB1].process(p->sh[V_SUB1].process(ring, mask, p->wpos));
         if (act[V_SUB2])
             wet += p->g_sub2 * p->vfilt[V_SUB2].process(p->sh[V_SUB2].process(ring, mask, p->wpos));
+        // +5th takes no detune: on both the POG2 and the POG3 the DETUNE
+        // slider acts on the +1/+2 voices only.
+        if (act[V_UP5])
+            wet += p->g_up5 * p->vfilt[V_UP5].process(p->sh[V_UP5].process(ring, mask, p->wpos));
         if (act[V_UP1]) {
             const float v = p->vfilt[V_UP1].process(p->sh[V_UP1].process(ring, mask, p->wpos));
             float o = v;

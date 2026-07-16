@@ -23,7 +23,7 @@ const JQUERY = fs.readFileSync(
 // LV2 defaults (from pogged.ttl).
 const PORTS = {
   dry_level: 1.0, sub1_level: 0.8, sub2_level: 0.0,
-  up1_level: 0.8, up2_level: 0.0,
+  up1_level: 0.8, up2_level: 0.0, up5_level: 0.0,
   detune_cents: 0.0, attack_ms: 0.0, attack_sens: 0.35,
   lp_cutoff: 20000, lp_q: 0.707, out_level: 1.0,
 };
@@ -72,6 +72,19 @@ function buildPage() {
     page.on('console', m => { if (m.type() === 'error') console.error('console:', m.text()); });
 
     await page.setContent(buildPage(), { waitUntil: 'load' });
+
+    // Every fader must get a value. A port missing from PORTS renders at the
+    // CSS fallback instead of its default, which looks plausible and is easy
+    // to miss by eye — so fail loudly rather than ship a wrong screenshot.
+    const unset = await page.evaluate((known) =>
+      [...document.querySelectorAll('.pogged-fader')]
+        .map(f => f.dataset.handle)
+        .filter(h => !known.includes(h)), Object.keys(PORTS));
+    if (unset.length) {
+      console.error('PORTS is missing defaults for:', unset.join(', '));
+      process.exit(1);
+    }
+
     await page.evaluate((ports) => {
       const icon = $('.pogged-panel');
       const portList = Object.keys(ports).map(s => ({ symbol: s, value: ports[s] }));

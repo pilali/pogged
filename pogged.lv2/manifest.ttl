@@ -47,4 +47,9 @@
     a pset:Preset ;
     rdfs:seeAlso <Bass_Synth.ttl> .
 
+<Quint_Organ.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <Quint_Organ.ttl> .
+
 <https://github.com/pilali/pogged> rdfs:seeAlso <modgui.ttl> .
