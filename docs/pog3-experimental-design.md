@@ -478,3 +478,44 @@ cohérence sans trame. C'est un résultat de recherche, pas un échec d'exécuti
 
 Le banc hétérodyne spectral (Spikes 1–4) est archivé comme dead-end documenté
 pour la fidélité polyphonique, gardé pour sa leçon sur la latence variable.
+
+---
+
+## 12. Transitoire, tentative 1 : reset de phase dans le vocodeur — négatif
+
+Direction (B) retenue par l'utilisateur : rendre l'attaque nette sur le
+vocodeur, qui l'étale sur ~85 ms. Première tentative : **reset de phase à la
+Röbel** — sur onset, remettre à zéro les accumulateurs `_rot[]` du vocodeur pour
+que la trame reconstruise depuis la phase d'analyse (attaque nette).
+
+**Résultat mesuré : négatif.** Temps de montée 10-90 % de l'attaque (+1 oct,
+`build/` hors-arbre) :
+- sans reset : 8,6 ms ;
+- reset **une** trame bien placée : 7,4 ms (−14 %) ;
+- reset appelé **au sample de l'attaque** (comme le ferait le plugin) : 8,6 ms
+  (**aucun effet** — consommé sur une trame silencieuse où `_rot` vaut déjà ~0) ;
+- reset une trame trop tard : 22,9 ms (**pire**).
+
+Effet minime, erratique, et **critique en timing** : selon la trame exacte sur
+laquelle il tombe, il n'a aucun effet, ou dégrade. Le maculage d'attaque du
+vocodeur n'est **pas** dominé par `_rot` — il tient à la translation de
+fréquence + l'OLA. Zéroter `_rot` n'est pas le bon levier. Le vrai Röbel
+demanderait la détection des **bins transitoires** et un traitement de trame
+dédié (fenêtre courte pendant l'attaque) — gros travail, gain incertain.
+Réverté (pas de code fragile no-op dans un moteur livré).
+
+### Tentative 2 (recommandée) : réinjection de transitoire
+
+Approche robuste et éprouvée pour une attaque nette : ne **pas** essayer de
+dé-maculer le vocodeur, mais **réinjecter** l'attaque par un chemin court.
+Le transitoire d'un mediator est percussif/large bande — sa hauteur importe
+peu — donc :
+- détecter l'onset (`OnsetDetector`, déjà là) ;
+- prélever une courte bouffée (~5-15 ms) enveloppée de l'entrée, éventuellement
+  passe-haut, **retardée** pour s'aligner sur la latence du wet ;
+- la sommer au bus wet. Sur un POG, le **dry** joue déjà ce rôle à latence zéro ;
+  la réinjection ne sert que les presets **wet-only** (dry coupé).
+
+C'est un changement **niveau plugin** (dry retardé + onset + mixage wet), pas
+niveau moteur — à faire dans `pogged_dsp.cpp` avec un test de netteté d'attaque
+comme métrique. Prochaine étape à valider.
