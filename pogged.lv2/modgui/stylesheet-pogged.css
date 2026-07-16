@@ -102,6 +102,50 @@
     width: 36px;
 }
 
+/* ── Pan pots (POG3) ────────────────────────────────────── */
+/* One small pot rides above each voice fader. Columns without a pan carry
+   .pogged-pan-spacer of the same height, so every track still starts on the
+   same line. --pan is 0..1 (0 = hard left, .5 = centre, 1 = hard right). */
+.pogged-panel{{{cns}}} .pogged-pan,
+.pogged-panel{{{cns}}} .pogged-pan-spacer {
+    flex: 0 0 auto;
+    height: 22px;
+    margin-bottom: 6px;
+    width: 22px;
+}
+.pogged-panel{{{cns}}} .pogged-pan {
+    background: radial-gradient(circle at 50% 35%, #fdf8ec, #cfc3a8 70%, #b3a68c);
+    border: 1px solid #8d8272;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.7);
+    cursor: ns-resize;
+    position: relative;
+}
+/* Pointer: a line from centre to rim, rotated -135°..+135° across the range. */
+.pogged-panel{{{cns}}} .pogged-pan-dial {
+    background: #2b2622;
+    border-radius: 1px;
+    height: 8px;
+    left: 50%;
+    margin-left: -1px;
+    position: absolute;
+    top: 2px;
+    transform: rotate(calc((var(--pan, 0.5) - 0.5) * 270deg));
+    transform-origin: 50% 9px;
+    width: 2px;
+}
+/* Centre detent mark on the panel above the pot. */
+.pogged-panel{{{cns}}} .pogged-pan::after {
+    background: rgba(43,38,34,0.45);
+    content: "";
+    height: 3px;
+    left: 50%;
+    margin-left: -0.5px;
+    position: absolute;
+    top: -5px;
+    width: 1px;
+}
+
 /* Track: dark slot; fill rises with the value; cap rides on top of it. */
 .pogged-panel{{{cns}}} .pogged-fader-track {
     background: #2b2622;

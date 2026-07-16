@@ -26,6 +26,14 @@ typedef struct {
     float lp_q;          /* idx 11 [0.5 – 8]                           */
     float out_level;     /* idx 12 [0 – 2]      1 = neutral            */
     float up5_level;     /* idx 13 [0 – 2]      +5th (POG3 voice)      */
+    /* idx 14 is audio_out_r (an audio port, not a control). */
+    /* Per-voice pan, POG3-style: -1 = hard left, 0 = centre, +1 = hard right */
+    float pan_dry;       /* idx 15 [-1 – 1]                            */
+    float pan_sub1;      /* idx 16 [-1 – 1]                            */
+    float pan_sub2;      /* idx 17 [-1 – 1]                            */
+    float pan_up5;       /* idx 18 [-1 – 1]                            */
+    float pan_up1;       /* idx 19 [-1 – 1]                            */
+    float pan_up2;       /* idx 20 [-1 – 1]                            */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */
@@ -34,9 +42,11 @@ PoggedDsp* pogged_dsp_new(double sample_rate);
 void       pogged_dsp_free(PoggedDsp*);
 void       pogged_dsp_reset(PoggedDsp*);     /* = activate() */
 
-/* Process n mono samples. in may equal out (in-place is fine). */
+/* Process n samples: mono in -> stereo out (POG3-style per-voice panning).
+   out_l/out_r must be distinct buffers; either may alias in. */
 void       pogged_dsp_process(PoggedDsp*, const PoggedParams*,
-                              const float* in, float* out, uint32_t n);
+                              const float* in, float* out_l, float* out_r,
+                              uint32_t n);
 
 #ifdef __cplusplus
 }

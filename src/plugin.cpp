@@ -31,17 +31,30 @@ enum Port : uint32_t {
     // Appended, not inserted: a port's index is its identity, so renumbering
     // would silently remap state a host already saved.
     P_UP5_LEVEL    = 13,   // +5th (POG3 voice)   [0 – 2]
-    P_COUNT        = 14
+    // The right output lands here rather than next to audio_out for the same
+    // reason: appending keeps every existing index stable. LV2 does not
+    // require audio ports to be contiguous.
+    P_AUDIO_OUT_R  = 14,
+    P_PAN_DRY      = 15,   // per-voice pan       [-1 – 1]
+    P_PAN_SUB1     = 16,
+    P_PAN_SUB2     = 17,
+    P_PAN_UP5      = 18,
+    P_PAN_UP1      = 19,
+    P_PAN_UP2      = 20,
+    P_COUNT        = 21
 };
 
+// Control ports are 2..13 and 15..20; index 14 is audio, so the ctl[] slot at
+// 14-2 is simply never connected.
 static constexpr uint32_t N_CTL = P_COUNT - 2;
 
 // ── Plugin instance ────────────────────────────────────────────────────────
 struct PoggedLV2 {
     PoggedDsp* dsp = nullptr;
 
-    const float* audio_in  = nullptr;
-    float*       audio_out = nullptr;
+    const float* audio_in    = nullptr;
+    float*       audio_out_l = nullptr;
+    float*       audio_out_r = nullptr;
     std::array<const float*, N_CTL> ctl = {};
 };
 
@@ -69,7 +82,9 @@ static void connect_port(LV2_Handle handle, uint32_t port, void* data)
     if (port == P_AUDIO_IN)
         p->audio_in = static_cast<const float*>(data);
     else if (port == P_AUDIO_OUT)
-        p->audio_out = static_cast<float*>(data);
+        p->audio_out_l = static_cast<float*>(data);
+    else if (port == P_AUDIO_OUT_R)
+        p->audio_out_r = static_cast<float*>(data);
     else if (port >= 2 && port < P_COUNT)
         p->ctl[port - 2] = static_cast<const float*>(data);
 }
@@ -97,9 +112,16 @@ static void run(LV2_Handle handle, uint32_t n_samples)
         ctl(p, P_LP_Q),
         ctl(p, P_OUT_LEVEL),
         ctl(p, P_UP5_LEVEL),
+        ctl(p, P_PAN_DRY),
+        ctl(p, P_PAN_SUB1),
+        ctl(p, P_PAN_SUB2),
+        ctl(p, P_PAN_UP5),
+        ctl(p, P_PAN_UP1),
+        ctl(p, P_PAN_UP2),
     };
 
-    pogged_dsp_process(p->dsp, &params, p->audio_in, p->audio_out, n_samples);
+    pogged_dsp_process(p->dsp, &params, p->audio_in,
+                       p->audio_out_l, p->audio_out_r, n_samples);
 }
 
 static void cleanup(LV2_Handle handle)

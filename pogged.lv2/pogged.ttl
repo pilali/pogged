@@ -26,7 +26,7 @@
         a lv2:AudioPort, lv2:OutputPort ;
         lv2:index 1 ;
         lv2:symbol "audio_out" ;
-        lv2:name   "Audio Out"
+        lv2:name   "Audio Out L"   # symbol kept: it is the port identity
     ] ,
 
     # ── Voice levels ─────────────────────────────────────────────────────
@@ -148,4 +148,68 @@
         lv2:minimum 0.0 ;
         lv2:maximum 2.0 ;
         lv2:default 0.0
+    ] ,
+
+    # ── Stereo: mono in → stereo out, POG3-style per-voice pan ───────────
+    # The right output sits at 14 rather than beside audio_out for the same
+    # reason the pans follow it: appending keeps every existing index stable.
+    [
+        a lv2:AudioPort, lv2:OutputPort ;
+        lv2:index 14 ;
+        lv2:symbol "audio_out_r" ;
+        lv2:name   "Audio Out R"
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index    15 ;
+        lv2:symbol   "pan_dry" ;
+        lv2:name     "Pan Dry" ;
+        lv2:minimum -1.0 ;
+        lv2:maximum  1.0 ;
+        lv2:default  0.0
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index    16 ;
+        lv2:symbol   "pan_sub1" ;
+        lv2:name     "Pan Sub Octave" ;
+        lv2:minimum -1.0 ;
+        lv2:maximum  1.0 ;
+        lv2:default  0.0
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index    17 ;
+        lv2:symbol   "pan_sub2" ;
+        lv2:name     "Pan Sub -2 Oct" ;
+        lv2:minimum -1.0 ;
+        lv2:maximum  1.0 ;
+        lv2:default  0.0
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index    18 ;
+        lv2:symbol   "pan_up5" ;
+        lv2:name     "Pan 5th Up" ;
+        lv2:minimum -1.0 ;
+        lv2:maximum  1.0 ;
+        lv2:default  0.0
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index    19 ;
+        lv2:symbol   "pan_up1" ;
+        lv2:name     "Pan Octave Up" ;
+        lv2:minimum -1.0 ;
+        lv2:maximum  1.0 ;
+        lv2:default  0.0
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index    20 ;
+        lv2:symbol   "pan_up2" ;
+        lv2:name     "Pan 2 Octaves Up" ;
+        lv2:minimum -1.0 ;
+        lv2:maximum  1.0 ;
+        lv2:default  0.0
     ] .

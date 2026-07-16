@@ -37,13 +37,22 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     p.add(std::make_unique<AF>(pid("lp_q"),         "Resonance",    qRange, 0.707f));
     p.add(std::make_unique<AF>(pid("out_level"),    "Output",       Range(0.0f, 2.0f), 1.0f));
 
+    // Per-voice pan (POG3): -1 hard left, 0 centre, +1 hard right.
+    Range panRange(-1.0f, 1.0f);
+    p.add(std::make_unique<AF>(pid("pan_dry"),  "Pan Dry",          panRange, 0.0f));
+    p.add(std::make_unique<AF>(pid("pan_sub1"), "Pan Sub Octave",   panRange, 0.0f));
+    p.add(std::make_unique<AF>(pid("pan_sub2"), "Pan Sub -2 Oct",   panRange, 0.0f));
+    p.add(std::make_unique<AF>(pid("pan_up5"),  "Pan 5th Up",       panRange, 0.0f));
+    p.add(std::make_unique<AF>(pid("pan_up1"),  "Pan Octave Up",    panRange, 0.0f));
+    p.add(std::make_unique<AF>(pid("pan_up2"),  "Pan 2 Octaves Up", panRange, 0.0f));
+
     return p;
 }
 
 PoggedAudioProcessor::PoggedAudioProcessor()
     : AudioProcessor(BusesProperties()
         .withInput("Input",  juce::AudioChannelSet::mono(), true)
-        .withOutput("Output", juce::AudioChannelSet::mono(), true)),
+        .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "PARAMS", createLayout())
 {
     auto raw = [this](const char* id){ return apvts.getRawParameterValue(id); };
@@ -59,6 +68,12 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pQ      = raw("lp_q");
     pOut    = raw("out_level");
     pUp5    = raw("up5_level");
+    pPanDry  = raw("pan_dry");
+    pPanSub1 = raw("pan_sub1");
+    pPanSub2 = raw("pan_sub2");
+    pPanUp5  = raw("pan_up5");
+    pPanUp1  = raw("pan_up1");
+    pPanUp2  = raw("pan_up2");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -86,8 +101,9 @@ bool PoggedAudioProcessor::isBusesLayoutSupported(const BusesLayout& l) const
     const auto out = l.getMainOutputChannelSet();
     if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
         return false;
-    // Mono engine: any mono/stereo input is summed to mono, the mono result is
-    // fanned out to every output channel.
+    // Mono-in engine: any mono/stereo input is summed to mono. The engine now
+    // emits stereo (per-voice pan); a mono output bus is still allowed and gets
+    // the L+R fold-down, which is lossless while the pans sit centred.
     const auto in = l.getMainInputChannelSet();
     return in == juce::AudioChannelSet::mono()
         || in == juce::AudioChannelSet::stereo()
@@ -101,16 +117,24 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     if (dsp == nullptr || n == 0) return;
 
     // Positional — field order must match PoggedParams (= the LV2 port order),
-    // so up5_level goes last, where it was appended.
+    // so the appended fields (up5_level, then the pans) go last.
     const PoggedParams p {
         pDry->load(), pSub1->load(), pSub2->load(), pUp1->load(), pUp2->load(),
         pDetune->load(), pAttack->load(), pSens->load(),
-        pCutoff->load(), pQ->load(), pOut->load(), pUp5->load()
+        pCutoff->load(), pQ->load(), pOut->load(), pUp5->load(),
+        pPanDry->load(), pPanSub1->load(), pPanSub2->load(),
+        pPanUp5->load(), pPanUp1->load(), pPanUp2->load()
     };
 
-    // Mono engine (guitar): sum the input to mono, process once, fan out.
-    monoScratch.setSize(1, n, false, false, true);
-    float* mono = monoScratch.getWritePointer(0);
+    // Mono-in engine (guitar): sum the input to mono, process once to stereo.
+    // Scratch channels: 0 = mono in, 1 = out L, 2 = out R. The engine needs two
+    // distinct output buffers, and the host's bus may be mono, so it cannot
+    // write into `buffer` directly.
+    scratch.setSize(3, n, false, false, true);
+    float* mono = scratch.getWritePointer(0);
+    float* wl   = scratch.getWritePointer(1);
+    float* wr   = scratch.getWritePointer(2);
+
     const int numIn = getTotalNumInputChannels();
     if (numIn > 0) {
         juce::FloatVectorOperations::copy(mono, buffer.getReadPointer(0), n);
@@ -122,11 +146,19 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         juce::FloatVectorOperations::clear(mono, n);
     }
 
-    pogged_dsp_process(dsp, &p, mono, mono, (uint32_t) n);
+    pogged_dsp_process(dsp, &p, mono, wl, wr, (uint32_t) n);
 
     const int numOut = getTotalNumOutputChannels();
-    for (int ch = 0; ch < numOut; ++ch)
-        juce::FloatVectorOperations::copy(buffer.getWritePointer(ch), mono, n);
+    if (numOut >= 2) {
+        juce::FloatVectorOperations::copy(buffer.getWritePointer(0), wl, n);
+        juce::FloatVectorOperations::copy(buffer.getWritePointer(1), wr, n);
+        for (int ch = 2; ch < numOut; ++ch)   // >2 outputs: mirror the left
+            juce::FloatVectorOperations::copy(buffer.getWritePointer(ch), wl, n);
+    } else if (numOut == 1) {
+        // Fold down rather than dropping R, or hard-panned voices would vanish.
+        float* o = buffer.getWritePointer(0);
+        for (int i = 0; i < n; ++i) o[i] = 0.5f * (wl[i] + wr[i]);
+    }
 }
 
 juce::AudioProcessorEditor* PoggedAudioProcessor::createEditor()

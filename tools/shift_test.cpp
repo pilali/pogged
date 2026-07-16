@@ -42,12 +42,14 @@ static bool run_voice(const char* name, int voice_idx, float target_hz,
                          &p.up2_level, &p.up5_level };
     *levels[voice_idx] = 1.0f;
 
-    std::vector<float> in(N), out(N);
+    // Pans default to centre, where the pedal pan law is unity on both
+    // channels — so L is exactly what the mono core used to emit.
+    std::vector<float> in(N), out(N), out_r(N);
     for (int i = 0; i < N; ++i)
         in[i] = 0.5f * std::sin(2.0 * M_PI * FIN * i / SR);
     for (int i = 0; i < N; i += BLOCK)
         pogged_dsp_process(dsp, &p, in.data() + i, out.data() + i,
-                           std::min(BLOCK, N - i));
+                           out_r.data() + i, std::min(BLOCK, N - i));
     pogged_dsp_free(dsp);
 
     const int from = (int)SR, to = N;               // skip 1 s of settling

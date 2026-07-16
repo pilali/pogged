@@ -17,31 +17,37 @@
 
         <!-- Voices -->
         <div class="pogged-fader" data-handle="dry_level" data-min="0" data-max="2" title="Dry">
+            <div class="pogged-pan" data-handle="pan_dry" data-min="-1" data-max="1" title="Pan Dry"><div class="pogged-pan-dial"></div></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="dry_level"></span>
             <span class="pogged-fader-label">DRY</span>
         </div>
         <div class="pogged-fader" data-handle="sub1_level" data-min="0" data-max="2" title="Sub Octave">
+            <div class="pogged-pan" data-handle="pan_sub1" data-min="-1" data-max="1" title="Pan Sub Octave"><div class="pogged-pan-dial"></div></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="sub1_level"></span>
             <span class="pogged-fader-label">SUB</span>
         </div>
         <div class="pogged-fader" data-handle="sub2_level" data-min="0" data-max="2" title="Sub -2 Octaves">
+            <div class="pogged-pan" data-handle="pan_sub2" data-min="-1" data-max="1" title="Pan Sub -2 Octaves"><div class="pogged-pan-dial"></div></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="sub2_level"></span>
             <span class="pogged-fader-label">SUB&nbsp;-2</span>
         </div>
         <div class="pogged-fader" data-handle="up5_level" data-min="0" data-max="2" title="5th Up (POG3 voice)">
+            <div class="pogged-pan" data-handle="pan_up5" data-min="-1" data-max="1" title="Pan 5th Up"><div class="pogged-pan-dial"></div></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="up5_level"></span>
             <span class="pogged-fader-label">+5TH</span>
         </div>
         <div class="pogged-fader" data-handle="up1_level" data-min="0" data-max="2" title="Octave Up">
+            <div class="pogged-pan" data-handle="pan_up1" data-min="-1" data-max="1" title="Pan Octave Up"><div class="pogged-pan-dial"></div></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="up1_level"></span>
             <span class="pogged-fader-label">+1&nbsp;OCT</span>
         </div>
         <div class="pogged-fader" data-handle="up2_level" data-min="0" data-max="2" title="Two Octaves Up">
+            <div class="pogged-pan" data-handle="pan_up2" data-min="-1" data-max="1" title="Pan 2 Octaves Up"><div class="pogged-pan-dial"></div></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="up2_level"></span>
             <span class="pogged-fader-label">+2&nbsp;OCT</span>
@@ -51,16 +57,19 @@
 
         <!-- Character -->
         <div class="pogged-fader" data-handle="detune_cents" data-min="0" data-max="25" title="Detune (up voices)">
+            <div class="pogged-pan-spacer"></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="detune_cents"></span>
             <span class="pogged-fader-label">DETUNE</span>
         </div>
         <div class="pogged-fader" data-handle="attack_ms" data-min="0" data-max="2000" data-scale="log" title="Attack swell">
+            <div class="pogged-pan-spacer"></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="attack_ms"></span>
             <span class="pogged-fader-label">ATTACK</span>
         </div>
         <div class="pogged-fader pogged-fader-small" data-handle="attack_sens" data-min="0" data-max="1" title="Attack sensitivity">
+            <div class="pogged-pan-spacer"></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="attack_sens"></span>
             <span class="pogged-fader-label">SENS</span>
@@ -70,16 +79,19 @@
 
         <!-- Filter + output -->
         <div class="pogged-fader" data-handle="lp_cutoff" data-min="20" data-max="20000" data-scale="log" title="Low-pass filter">
+            <div class="pogged-pan-spacer"></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="lp_cutoff"></span>
             <span class="pogged-fader-label">LP&nbsp;FILT</span>
         </div>
         <div class="pogged-fader pogged-fader-small" data-handle="lp_q" data-min="0.5" data-max="8" data-scale="log" title="Filter resonance">
+            <div class="pogged-pan-spacer"></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="lp_q"></span>
             <span class="pogged-fader-label">RES</span>
         </div>
         <div class="pogged-fader" data-handle="out_level" data-min="0" data-max="2" title="Output level">
+            <div class="pogged-pan-spacer"></div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="out_level"></span>
             <span class="pogged-fader-label">OUT</span>
@@ -89,6 +101,12 @@
 
     <div class="pogged-tooltip"></div>
 
+</div>
+
+<!-- Audio I/O jacks — siblings of the panel, NOT children: MOD-UI core
+     positions them at left:-88px / right:-87px, i.e. outside the panel box.
+     Nested inside, the panel's overflow:hidden clips them away and the plugin
+     cannot be connected at all. Mirrors Megalo's template. -->
 <div class="mod-pedal-input">
     {{#effect.ports.audio.input}}
     <div class="mod-input mod-input-disconnected" title="{{name}}" mod-role="input-audio-port" mod-port-symbol="{{symbol}}">
@@ -122,5 +140,4 @@
         <div class="mod-pedal-output-image"></div>
     </div>
     {{/effect.ports.cv.output}}
-</div>
 </div>

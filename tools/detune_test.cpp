@@ -54,12 +54,12 @@ int main()
     p.attack_sens  = 0.35f;
     p.detune_cents = 25.0f;        // max: depth 25 cents, LFO rate 3 Hz
 
-    std::vector<float> in(N), out(N);
+    std::vector<float> in(N), out(N), out_r(N);   // pans centred: L == R
     for (int i = 0; i < N; ++i)
         in[i] = 0.5f * std::sin(2.0 * M_PI * FIN * i / SR);
     for (int i = 0; i < N; i += BLOCK)
         pogged_dsp_process(dsp, &p, in.data() + i, out.data() + i,
-                           std::min(BLOCK, N - i));
+                           out_r.data() + i, std::min(BLOCK, N - i));
     pogged_dsp_free(dsp);
 
     const int from = (int)SR, to = N;                   // skip 1 s of settling

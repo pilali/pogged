@@ -44,7 +44,8 @@ private:
 
     PoggedDsp* dsp = nullptr;
     double currentSampleRate = 0.0;
-    juce::AudioBuffer<float> monoScratch;
+    // 3 channels: 0 = mono in, 1 = out L, 2 = out R.
+    juce::AudioBuffer<float> scratch;
     int currentProgram = 0;
 
     // Cached raw-parameter atomics (denormalised values, ready for PoggedParams).
@@ -60,6 +61,12 @@ private:
     std::atomic<float>* pQ      = nullptr;
     std::atomic<float>* pOut    = nullptr;
     std::atomic<float>* pUp5    = nullptr;
+    std::atomic<float>* pPanDry  = nullptr;
+    std::atomic<float>* pPanSub1 = nullptr;
+    std::atomic<float>* pPanSub2 = nullptr;
+    std::atomic<float>* pPanUp5  = nullptr;
+    std::atomic<float>* pPanUp1  = nullptr;
+    std::atomic<float>* pPanUp2  = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedAudioProcessor)
 };

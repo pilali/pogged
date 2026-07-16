@@ -32,6 +32,24 @@
 		lv2:symbol "out_level" ;
 		pset:value 1.0
 	] , [
+		lv2:symbol "pan_dry" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "pan_sub1" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "pan_sub2" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "pan_up1" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "pan_up2" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "pan_up5" ;
+		pset:value 0.0
+	] , [
 		lv2:symbol "sub1_level" ;
 		pset:value 1.2
 	] , [

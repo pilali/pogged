@@ -13,7 +13,7 @@ static constexpr int   BLOCK = 256;
 int main()
 {
     const int n = (int)(4.0f * SR);
-    std::vector<float> in(n), out(n);
+    std::vector<float> in(n), out(n), out_r(n);   // pans centred: L == R
     for (int i = 0; i < n; ++i)
         in[i] = 0.5f * std::sin(2.0 * M_PI * 220.0 * i / SR);
 
@@ -48,7 +48,7 @@ int main()
             *steps[next].field = steps[next].value;
             ++next;
         }
-        pogged_dsp_process(dsp, &p, in.data() + i, out.data() + i,
+        pogged_dsp_process(dsp, &p, in.data() + i, out.data() + i, out_r.data() + i,
                            std::min(BLOCK, n - i));
     }
     pogged_dsp_free(dsp);

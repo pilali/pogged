@@ -23,9 +23,9 @@ static std::vector<float> render(float attack_ms, const std::vector<float>& in)
     p.attack_sens = 0.35f;
 
     const int n = (int)in.size();
-    std::vector<float> out(n);
+    std::vector<float> out(n), out_r(n);          // pans centred: L == R
     for (int i = 0; i < n; i += BLOCK)
-        pogged_dsp_process(dsp, &p, in.data() + i, out.data() + i,
+        pogged_dsp_process(dsp, &p, in.data() + i, out.data() + i, out_r.data() + i,
                            std::min(BLOCK, n - i));
     pogged_dsp_free(dsp);
     return out;

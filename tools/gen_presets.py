@@ -25,9 +25,18 @@ URI  = "https://github.com/pilali/pogged"
 #   detune_cents 0..25
 #   attack_ms 0..2000   attack_sens 0..1
 #   lp_cutoff 20..20000   lp_q 0.5..8   out_level 0..2
+#   pan_* -1..1 (-1 hard left, 0 centre, +1 hard right)
+
+# Pans are centred unless a preset says otherwise, so a preset only spells out
+# what it actually places in the stereo field.
+PAN_DEFAULTS = {s: 0.0 for s in
+                ("pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2")}
+
 
 def P(name, **vals):
-    return {"name": name, "vals": vals}
+    v = dict(PAN_DEFAULTS)
+    v.update(vals)
+    return {"name": name, "vals": v}
 
 PRESETS = [
     P("Classic POG",
@@ -85,7 +94,9 @@ ORDER = sorted([
     "dry_level", "sub1_level", "sub2_level", "up1_level", "up2_level",
     "up5_level", "detune_cents", "attack_ms", "attack_sens", "lp_cutoff",
     "lp_q", "out_level",
+    "pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2",
 ])
+
 
 TTL_PREFIX = """\
 @prefix atom: <http://lv2plug.in/ns/ext/atom#> .

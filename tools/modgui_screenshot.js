@@ -26,6 +26,8 @@ const PORTS = {
   up1_level: 0.8, up2_level: 0.0, up5_level: 0.0,
   detune_cents: 0.0, attack_ms: 0.0, attack_sens: 0.35,
   lp_cutoff: 20000, lp_q: 0.707, out_level: 1.0,
+  pan_dry: 0.0, pan_sub1: 0.0, pan_sub2: 0.0,
+  pan_up5: 0.0, pan_up1: 0.0, pan_up2: 0.0,
 };
 
 const PANEL_W = 640, PANEL_H = 380;
@@ -37,9 +39,10 @@ function buildPage() {
   const gui = fs.readFileSync(path.join(dir, 'script-pogged.js'), 'utf8');
 
   // Strip the mustache bits: template class + the audio I/O jack blocks
-  // (they live outside the panel and need MOD-UI to render).
+  // (they are siblings of the panel and need MOD-UI core to render/position).
+  // The panel closes itself before the jacks, so nothing to re-close here.
   html = html.replace(/\{\{\{cns\}\}\}/g, '');
-  html = html.split('<div class="mod-pedal-input">')[0] + '</div>';
+  html = html.split('<!-- Audio I/O jacks')[0];
   css = css.replace(/\{\{\{cns\}\}\}/g, '');
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -77,7 +80,7 @@ function buildPage() {
     // CSS fallback instead of its default, which looks plausible and is easy
     // to miss by eye — so fail loudly rather than ship a wrong screenshot.
     const unset = await page.evaluate((known) =>
-      [...document.querySelectorAll('.pogged-fader')]
+      [...document.querySelectorAll('.pogged-fader, .pogged-pan')]
         .map(f => f.dataset.handle)
         .filter(h => !known.includes(h)), Object.keys(PORTS));
     if (unset.length) {
