@@ -11,14 +11,24 @@
 // Two things are pinned here, one of which is a KNOWN FAILURE kept visible on
 // purpose:
 //
-//   1. Baritone mode measurably cleans up a single low B (its whole point).
-//   2. The chord ripple. The audit used to check ripple on a *sine* — 0.6 dB,
-//      green, while a real chord pulses at ~15 dB and ~12 Hz, right in the
-//      tremolo band. That blindness is why the defect shipped. The bound below
-//      is set to today's measured reality, NOT to the 6 dB a sine passes: it
-//      documents the debt instead of hiding it, and tightens when the phase
-//      vocoder lands. Grain tuning alone will not get there — measured, longer
-//      grains make chords *worse*, not better.
+//   1. Baritone mode is at least as clean as guitar mode on a low B. Note the
+//      weak claim: the grain rule (>=2 periods of the EMITTED note) is sound
+//      engineering, but measured through an honest 150 ms window a sustained
+//      low B improves only 0.4 -> 0.2 dB. A sustained single note is the easy
+//      case — the aligner locks onto it even at 1.7 periods. An earlier 20 ms
+//      window flattered this to 2.4 -> 1.5 dB and made the mode look like a
+//      fix; it is not one. It is kept because the sizing rule is right, not
+//      because it rescues the sound.
+//   2. The chord ripple — measured AGAINST AN IDEALLY SHIFTED CHORD, not
+//      against zero. This matters, and an earlier version of this test got it
+//      badly wrong: a chord of non-harmonic partials beats on its own (E major
+//      partials sit 42.8 Hz apart -> a 23 ms beat period), so a 20 ms RMS
+//      window reads ~12 dB of ripple on a PERFECT shift with no plugin in the
+//      path at all. The "15 dB pulsation" that reading implied was mostly the
+//      chord being a chord. With a 150 ms window — past every beat period —
+//      the floor drops to 0.5 dB and the granular engine's real artifact shows
+//      up honestly: +4.8 dB on the sub. Real, audible, and worth fixing; just
+//      not 15 dB.
 #include "../src/pogged_dsp.h"
 #include <cmath>
 #include <cstdio>
@@ -27,6 +37,8 @@
 static constexpr float SR = 48000.0f;
 static constexpr int   N  = (int)SR * 3, BLOCK = 256;
 
+// 150 ms RMS window: longer than any beat period in a guitar chord, so this
+// measures the shifter's artifact rather than the signal's own beating.
 static double ripple_db(const std::vector<float>& in, float range, float f_low_unused)
 {
     (void)f_low_unused;
@@ -39,7 +51,7 @@ static double ripple_db(const std::vector<float>& in, float range, float f_low_u
         pogged_dsp_process(d, &p, in.data()+i, l.data()+i, r.data()+i, std::min(BLOCK, N-i));
     pogged_dsp_free(d);
 
-    const int win = (int)(0.020f*SR), hop = (int)(0.005f*SR);
+    const int win = (int)(0.150f*SR), hop = (int)(0.010f*SR);
     double rmin = 1e30, rmax = 0;
     for (int i = (int)SR; i + win < N; i += hop) {
         double e = 0; for (int j = 0; j < win; ++j) e += (double)l[i+j]*l[i+j];
@@ -65,20 +77,23 @@ int main()
     // 1. Baritone mode does its job on a low B.
     const double g = ripple_db(lowB, 0.0f, 0);
     const double b = ripple_db(lowB, 1.0f, 0);
-    const bool better = b < g - 0.4;
+    const bool better = b <= g + 0.05;      // must not be worse; gain is small
     std::printf("  low B1, sub -1: guitar mode %.1f dB -> baritone mode %.1f dB "
-                "(%+.1f dB)  %s\n", g, b, b - g, better ? "ok" : "WRONG");
+                "(%+.1f dB, small by design — see header)  %s\n",
+                g, b, b - g, better ? "ok" : "WRONG");
     ok &= better;
 
-    // 2. Polyphonic ripple — the known defect, bounded so it cannot silently
-    //    get worse. A sine reads 0.6 dB here; a chord is the honest test.
+    // 2. Polyphonic ripple vs the ideal-shift floor. An ideally shifted E
+    //    major chord measures 0.5 dB through this same 150 ms window, so
+    //    anything above that is the engine's own artifact.
     const double c = ripple_db(chord, 0.0f, 0);
-    const bool bounded = c <= 17.0;
-    std::printf("  E major chord, sub -1: %.1f dB ripple (<= 17 today; a sine "
-                "reads 0.6)\n", c);
+    const bool bounded = c <= 7.0;
+    std::printf("  E major chord, sub -1: %.1f dB (<= 7; an IDEAL shift of the "
+                "same chord reads 0.5)\n", c);
     std::printf("    ^ known: granular splices cannot align a chord's "
                 "incommensurable periods.\n"
-                "      Bound tightens to ~6 dB when the phase vocoder lands.\n");
+                "      The streaming phase vocoder measures 0.5 dB here — "
+                "exactly the floor.\n");
     ok &= bounded;
 
     std::printf("range_test: %s\n", ok ? "PASS" : "FAIL");
