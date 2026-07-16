@@ -96,28 +96,30 @@ int main()
     // Filter bank: latency is the bass channel group delay (~40 ms at 55 Hz).
     const double fb = disturbance<StreamFilterbank>(in, (int)(0.045f * SR),
                                                     "filterbank");
-    // With PEAK-PICKED resynthesis A holds within ~1.2 dB. That is the point of
-    // this spike: the SAME engine with naive overlap-sum resynthesis dropped A
-    // by 6.1 dB when B attacked — every overlapping channel carrying A drifted
-    // apart under B's leakage. Collapsing each partial onto one dominant channel
-    // (design §1.1) cuts that ~5×. The residual is peak flicker → Spike 2.
-    const bool fb_ok = fb < 1.5;
+    // The branch's DECISIVE criterion, and Spike 2 essentially closes it:
+    //   naive overlap-sum resynthesis  : A dropped 6.1 dB when B attacked
+    //   + one oscillator per partial    : 1.2 dB   (Spike 1)
+    //   + phase handoff on channel swap : 0.45 dB  (Spike 2) — vocoder-grade
+    // Every overlapping channel carrying A used to drift apart under B's
+    // leakage; collapsing A onto one dominant channel and handing its phase
+    // across channel crossings keeps it rock-steady when B lands (design §1.1).
+    const bool fb_ok = fb < 0.6;
     ok &= fb_ok;
 
 #ifndef POGGED_NO_VOCODER
     const double pv = disturbance<StreamVocoder>(in, StreamVocoder::N, "vocoder");
-    std::printf("  -> filter bank disturbs A by %.2f dB (< 1.5), vocoder by %.2f dB\n",
+    std::printf("  -> filter bank disturbs A by %.2f dB (< 0.6), vocoder by %.2f dB\n",
                 fb, pv);
     // HONEST CAVEAT, kept visible: on this clean TWO-tone input the vocoder's
-    // re-partition is stable, so it scores well here — this metric is a floor
-    // check on the filter bank, NOT yet the decisive discriminator. Reproducing
-    // the vocoder's real "ringing note moves" defect needs denser, closer
-    // material (many partials that re-partition when B lands): Spike 2 test work.
-    std::printf("  filter bank holds A within 1.5 dB  %s   "
-                "(vocoder wins on this easy input — see caveat in source)\n",
+    // re-partition is stable, so it too scores well — both are now excellent
+    // here, so this metric is a floor check, NOT yet the decisive discriminator.
+    // Reproducing the vocoder's real "ringing note moves" defect needs denser,
+    // closer material (many partials that re-partition when B lands): Spike 3.
+    std::printf("  filter bank holds A within 0.6 dB  %s   "
+                "(both engines clean on this easy input — see caveat in source)\n",
                 fb_ok ? "ok" : "WRONG");
 #else
-    std::printf("  filter bank disturbs A by %.2f dB (< 1.5)  %s\n",
+    std::printf("  filter bank disturbs A by %.2f dB (< 0.6)  %s\n",
                 fb, fb_ok ? "ok" : "WRONG");
 #endif
 

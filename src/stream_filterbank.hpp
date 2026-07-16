@@ -4,8 +4,8 @@
 #include <cmath>
 #include <cstring>
 
-// Streaming constant-Q heterodyne filter bank pitch shifter — SPIKE 1 of the
-// experimental POG3 branch. See docs/pog3-experimental-design.md.
+// Streaming constant-Q heterodyne filter bank pitch shifter — SPIKES 1–2 of the
+// experimental POG3 branch. See docs/pog3-experimental-design.md §8.
 //
 // WHY THIS EXISTS. The two shipping engines both have a structural ceiling:
 //   - StreamShifter (granular, 3 ms) locks its correlation aligner onto ONE
@@ -28,7 +28,16 @@
 // Each channel is an INDEPENDENT, sample-by-sample oscillator. There is no
 // frame, no block boundary, no global re-partition: a new note excites only the
 // channels in its band and leaves every other channel's θk accumulating
-// undisturbed. That is the arpeggio criterion (§1.1), structural here.
+// undisturbed. That is the arpeggio criterion (§1.1), structural here — but only
+// if the RESYNTH does not undo it. Emitting every channel (Spike 1's first try)
+// did: a partial is carried by ~CPO/2 overlapping channels, and another note's
+// leakage pulls each channel's nonlinear frequency estimate differently, so they
+// decorrelate and cancel — a new attack DROPPED a ringing note by 6 dB, §1.1
+// inverted. The fix (Spike 2) is to emit ONE oscillator per partial — the local-
+// maximum channel — with a PHASE HANDOFF when a drifting partial crosses to the
+// next channel, so the crossover is seamless. That took the arpeggio disturbance
+// to ~0.4 dB (vocoder-comparable) and the chord sub below the granular engine.
+// See pass 2 in process().
 //
 // CONSTANT-Q. Channels are log-spaced (CPO per octave) with bandwidth ∝ centre
 // frequency (Q = fk / BWk fixed). Two consequences, both wanted:
@@ -50,6 +59,11 @@
 //   - cos/atan2 per channel per sample: clarity over speed here. ~46 channels
 //     is fine offline; a real-time pass wants a recurrence for the resynth
 //     oscillator and a table/polynomial for arg. Not this commit.
+//   - Chord sub still sits ~3 dB above the vocoder's ideal floor: a WEAK partial
+//     next to a STRONG one in a sparse log bank is masked by the strong one's
+//     skirt, so its channel is an intermittent local max and it emits unevenly.
+//     Beating that needs real partial tracking (parabolic peak amplitude +
+//     birth/death matching) or higher resolution without the latency — Spike 3.
 //   - No transient split yet (design §7 keeps it as the next perceptual win).
 //
 // Same interface as StreamShifter / StreamVocoder (init / reset / set_ratio /
@@ -96,6 +110,8 @@ public:
             _z[i]     = {};
             _zprev[i] = {};
             _theta[i] = 0.0f;
+            _emitting[i] = false;
+            _emit[i]     = false;
         }
         _renorm = 0;
     }
@@ -146,24 +162,55 @@ public:
         if (renorm) _renorm = 0;
 
         // Pass 2 — emit ONE oscillator per detected partial. Emitting every
-        // overlapping channel was the spike's first failure: a partial is
-        // carried by ~CPO/2 channels at once, and leakage from OTHER notes pulls
-        // each channel's (nonlinear) frequency estimate differently, so those
+        // overlapping channel was Spike 1's first failure: a partial is carried
+        // by ~CPO/2 channels at once, and leakage from OTHER notes pulls each
+        // channel's (nonlinear) frequency estimate differently, so those
         // channels decorrelate and their sum cancels — a new attack then dropped
-        // a ringing note by 6 dB (arpeggio_test), the exact opposite of §1.1.
-        // Keeping only local-maximum channels (|zk| ≥ both neighbours, above a
-        // floor) collapses each partial onto its own dominant channel, whose
-        // frequency estimate is barely perturbed by distant notes. Adjacent
-        // near-equal peaks both track the SAME partial, so they stay coherent
-        // and sum constructively rather than fighting.
-        float out = 0.0f;
+        // a ringing note by 6 dB, the exact opposite of §1.1. Keeping only
+        // local-maximum channels collapses each partial onto its dominant
+        // channel, whose frequency estimate is barely perturbed by distant
+        // notes. That cut the damage ~5×, but left a residual FLICKER: a partial
+        // sitting between two channels makes the local max jump between them as
+        // |z| wobbles, and the two channels' θ free-ran from different histories,
+        // so each jump was a phase step (arpeggio 1.2 dB).
+        //
+        // Spike 2 kills that flicker with a PHASE HANDOFF: when the emitting
+        // channel for a partial changes, the new channel inherits the departing
+        // one's θ. Both channels track the same partial frequency, so once
+        // aligned they stay aligned and the crossover is seamless — arpeggio
+        // 1.2 → 0.4 dB. (A hysteresis margin was tried on top and dropped: it
+        // bought a little more but every safe formulation either deadlocked a
+        // straddling tone into silence or latched whole clusters on. The handoff
+        // alone is robust on every |z| pattern.)
         for (int k = 0; k < _nch; ++k) {
             const float lo = (k > 0)        ? _a[k - 1] : 0.0f;
             const float hi = (k < _nch - 1) ? _a[k + 1] : 0.0f;
-            if (_a[k] >= lo && _a[k] >= hi && _a[k] > PEAK_FLOOR)
-                // ×2: demodulating a real cosine A·cos keeps the A/2 baseband
-                // term, so the envelope is half the real amplitude — double it.
-                out += 2.0f * _a[k] * std::cos(_theta[k]);
+            // Strict on the left, ≥ on the right: breaks ties so a partial
+            // straddling two EQUAL channels yields exactly ONE winner, never a
+            // deadlock (a two-sided margin could be met by neither and silence a
+            // whole note; a retention BOOST vs raw neighbours let whole clusters
+            // latch on — both tried, both rejected). Mutual exclusion holds on
+            // every |z| pattern, and the phase handoff below does the smoothing
+            // that a hysteresis margin was reaching for, without its failure
+            // modes.
+            const float m = _a[k];
+            _emit[k] = (m > lo) && (m >= hi) && (m > PEAK_FLOOR);
+        }
+        for (int k = 0; k < _nch; ++k) {
+            if (_emit[k] && !_emitting[k]) {              // rising edge: hand off
+                int src = -1;
+                if (k > 0        && _emitting[k - 1]) src = k - 1;
+                if (k < _nch - 1 && _emitting[k + 1] &&
+                    (src < 0 || _a[k + 1] > _a[src]))  src = k + 1;
+                if (src >= 0) _theta[k] = _theta[src];   // inherit phase
+            }
+        }
+        float out = 0.0f;
+        for (int k = 0; k < _nch; ++k) {
+            // ×2: demodulating a real cosine A·cos keeps the A/2 baseband term,
+            // so the envelope is half the real amplitude — double it back.
+            if (_emit[k]) out += 2.0f * _a[k] * std::cos(_theta[k]);
+            _emitting[k] = _emit[k];
         }
 
         // One emitter per partial now, so no overlap sum to divide out. A
@@ -189,4 +236,6 @@ private:
     std::complex<float> _zprev[MAXCH] = {};   // previous envelope (for dφ)
     float _theta[MAXCH] = {};                 // resynth phase accumulators
     float _a[MAXCH]     = {};                 // per-sample channel magnitude
+    bool  _emitting[MAXCH] = {};              // was channel k an emitter last sample
+    bool  _emit[MAXCH]     = {};              // is channel k an emitter this sample
 };

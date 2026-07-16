@@ -292,12 +292,56 @@ transposition propre, latence dépendante de la fréquence, **bat le granulaire
 sur accord**, structure per-canal. Mais atteindre la propreté du vocodeur
 demande le suivi de partiels — c'est le cœur du Spike 2, pas un réglage.
 
-### Spike 2 — plan
-- **Suivi de partiels** sur le banc : hystérésis de sélection des pics + appariement
-  inter-échantillon, pour supprimer le flicker (cible : ripple accord < +1 dB,
-  arpège < 0,3 dB).
+---
+
+## 9. Résultats du Spike 2 (suivi par passage de phase)
+
+Objectif : tuer le flicker résiduel du Spike 1. Chemin parcouru, mesuré à
+chaque pas (`filterbank_test`, `arpeggio_test`) :
+
+| Étape | Arpège (§1.1) | Ripple accord | Verdict |
+|---|---|---|---|
+| Spike 1 (un osc/partiel) | 1,2 dB | +3,4 dB | point de départ |
+| + hystérésis + passage de phase | **0,04 dB** | +3,4 dB | meilleur que le vocodeur… |
+| …mais **fragile** | — | — | deadlock / latch-up (voir ci-dessous) |
+| **Retenu : passage de phase seul** | **0,45 dB** | +3,4 dB | robuste, qualité-vocodeur |
+
+**Ce qui a marché — le passage de phase.** Quand le canal émetteur d'un partiel
+change (le partiel dérive d'un canal au suivant), le nouveau canal **hérite le
+θ du canal sortant**. Les deux suivent la même fréquence, donc une fois alignés
+ils restent alignés : le croisement est sans couture. À lui seul il fait passer
+l'arpège de 1,2 à **0,45 dB** — au niveau du vocodeur (0,16 dB sur ce test
+facile), et l'exact opposé des −6 dB du banc naïf.
+
+**Ce qui a été essayé et rejeté — l'hystérésis.** Ajoutée par-dessus, elle
+gagnait encore (0,04 dB) mais **toute** formulation sûre cassait ailleurs :
+- marge (1±H) des deux côtés → un ton pile entre deux canaux égaux ne dépasse
+  *ni* l'un *ni* l'autre de la marge → **aucun** n'émet → note **silencée** ;
+- boost de rétention du canal émetteur contre ses voisins bruts → deux canaux
+  adjacents se boostent mutuellement → **latch-up** de grappes entières
+  (amplitude ×6, mesurée).
+La sélection retenue — max local strict-à-gauche/≥-à-droite (un seul gagnant sur
+tout plateau) **sans** hystérésis — est robuste sur n'importe quel profil de
+|z|. Le passage de phase fait le lissage que l'hystérésis visait, sans ses
+modes de défaillance.
+
+**Ce qui reste — plafond du ripple d'accord (→ Spike 3).** Toujours +3,4 dB sur
+l'accord. Cause **diagnostiquée** (et non plus supposée) : un partiel **faible
+voisin d'un fort** est masqué par la jupe du fort dans un banc log clairsemé ;
+son canal n'est max local que par intermittence, donc il émet irrégulièrement.
+Mesuré : les trois partiels de l'accord ressortent à **0,19 / 0,05 / 0,04** au
+lieu d'égaux. Ni l'affinage du maillage (CPO 12 : arpège *dégradé* à 1,9 dB pour
+un maigre gain d'accord) ni une marge ne corrigent ça — il faut du vrai **suivi
+de partiels** (amplitude de pic par interpolation parabolique + appariement
+naissance/mort) ou plus de résolution sans la latence.
+
+### Spike 3 — plan
+- **Suivi de partiels** : interpolation parabolique de l'amplitude/fréquence de
+  pic (corrige le masquage faible-près-de-fort et le scalloping), appariement
+  inter-échantillon. Cible : ripple accord < +1 dB.
 - **Test d'arpège dense** exposant enfin le défaut du vocodeur (matériau à
-  partiels serrés), pour faire d'`arpeggio_test` un vrai discriminant.
+  partiels serrés qui re-partitionnent quand B arrive), pour faire
+  d'`arpeggio_test` un vrai discriminant plutôt qu'un plancher.
 - **Aplatissement du banc** (follow-up #1) : trim de gain par canal pour une
   réponse unité plate, prérequis avant tout branchement dans `Focus`.
 - Puis seulement : câblage comme 3ᵉ option de `Focus` (TTL LV2 + JUCE + modgui).

@@ -140,16 +140,18 @@ int main()
         std::printf("    filter bank       : %.1f dB  (%+.1f over floor)\n",
                     fb_db, fb_db - floor_db);
 
-        // The spike's DEFENSIBLE claim: peak-picked resynthesis beats the
-        // granular splice ripple on a chord. It does NOT yet reach the vocoder's
-        // ideal floor (+0.0 dB) — a residual ~3 dB remains because a partial
-        // still flickers between adjacent local-max channels as its magnitude
-        // wobbles, and each hop is a small amplitude/phase step. Killing that
-        // needs partial TRACKING (hysteresis / continuity between frames), which
-        // is Spike 2. Kept visible here, range_test-style, not dressed up.
+        // The DEFENSIBLE claim: peak-picked resynthesis beats the granular
+        // splice ripple on a chord. It does NOT yet reach the vocoder's ideal
+        // floor (+0.0 dB) — a residual ~3 dB remains, and Spike 2 diagnosed why:
+        // a WEAK partial next to a STRONG one is masked by the strong partial's
+        // skirt in this sparse log bank, so the weak one's channel is only an
+        // intermittent local max and it emits unevenly (measured: the three
+        // chord partials come out at 0.19 / 0.05 / 0.04 instead of equal).
+        // Beating that needs real partial tracking (parabolic peak amplitude +
+        // birth/death matching) — Spike 3. Kept visible, range_test-style.
         const bool beats = fb_db < gr_db;
         std::printf("    -> filter bank %s the granular engine (%.1f vs %.1f dB); "
-                    "still +%.1f over the vocoder floor — peak flicker, Spike 2  %s\n",
+                    "still +%.1f over the vocoder floor — weak-partial masking, Spike 3  %s\n",
                     beats ? "beats" : "DOES NOT beat", fb_db, gr_db,
                     fb_db - floor_db, beats ? "ok" : "WRONG");
         ok &= beats;
