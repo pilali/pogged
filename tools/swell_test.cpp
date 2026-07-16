@@ -17,6 +17,7 @@ static std::vector<float> render(float attack_ms, const std::vector<float>& in)
     PoggedParams p = {};
     p.up1_level   = 1.0f;
     p.out_level   = 1.0f;
+    p.input_gain  = 1.0f;   // 0 would clamp to 0.5: a silent 6 dB cut
     p.lp_cutoff   = 20000.0f;
     p.lp_q        = 0.707f;
     p.attack_ms   = attack_ms;

@@ -31,6 +31,7 @@ const PORTS = {
   spread: 0.0,
   filter_mode: 0, filter_env: 0.0, filter_env_a: 50, filter_env_d: 200,
   filter_sens: 0.5, range_mode: 0, focus: 0,
+  input_gain: 1.0, dry_attack: 0, dry_filter: 0, dry_detune: 0,
 };
 
 const PANEL_W = 760, PANEL_H = 380;

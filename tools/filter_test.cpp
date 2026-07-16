@@ -47,6 +47,7 @@ static double level(int mode, float cutoff, float env_depth,
     PoggedParams p = {};
     p.up1_level    = 1.0f;              // dry muted: only the wet path is heard
     p.out_level    = 1.0f;
+    p.input_gain  = 1.0f;   // 0 would clamp to 0.5: a silent 6 dB cut
     p.lp_cutoff    = cutoff;
     p.lp_q         = 0.707f;
     p.attack_sens  = 0.35f;

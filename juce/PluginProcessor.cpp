@@ -73,6 +73,13 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
         pid("focus"), "Focus",
         juce::StringArray { "Granular (fast)", "Vocoder (clean)" }, 0));
 
+    // Input gain + DRY routing (POG3). The DRY buttons send the dry through
+    // each effect; all off = the POG's untouched, undelayed dry.
+    p.add(std::make_unique<AF>(pid("input_gain"), "Input Gain", Range(0.5f, 3.0f), 1.0f));
+    p.add(std::make_unique<juce::AudioParameterBool>(pid("dry_attack"), "Dry: Attack", false));
+    p.add(std::make_unique<juce::AudioParameterBool>(pid("dry_filter"), "Dry: Filter", false));
+    p.add(std::make_unique<juce::AudioParameterBool>(pid("dry_detune"), "Dry: Detune", false));
+
     return p;
 }
 
@@ -109,6 +116,10 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pFiltSens = raw("filter_sens");
     pRange    = raw("range_mode");
     pFocus    = raw("focus");
+    pInGain   = raw("input_gain");
+    pDryAtk   = raw("dry_attack");
+    pDryFilt  = raw("dry_filter");
+    pDryDet   = raw("dry_detune");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -160,7 +171,8 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pPanDry->load(), pPanSub1->load(), pPanSub2->load(),
         pPanUp5->load(), pPanUp1->load(), pPanUp2->load(), pSpread->load(),
         pFiltMode->load(), pFiltEnv->load(), pFiltEnvA->load(),
-        pFiltEnvD->load(), pFiltSens->load(), pRange->load(), pFocus->load()
+        pFiltEnvD->load(), pFiltSens->load(), pRange->load(), pFocus->load(),
+        pInGain->load(), pDryAtk->load(), pDryFilt->load(), pDryDet->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.

@@ -97,7 +97,9 @@ static inline Biquad::Type filter_mode_of(float v) noexcept {
 // ── Voice bank layout ────────────────────────────────────────────────────────
 // Internal ordering only — nothing persists these, so they are free to be
 // grouped logically (the LV2 port order is fixed separately in pogged_dsp.h).
-enum Voice { V_SUB1 = 0, V_SUB2, V_UP5, V_UP1, V_UP2, V_UP1D, V_UP2D, N_VOICES };
+enum Voice { V_SUB1 = 0, V_SUB2, V_UP5, V_UP1, V_UP2, V_UP1D, V_UP2D,
+             V_DRYD,          // detuned copy of the dry (POG3 DRY DETUNE)
+             N_VOICES };
 
 // Perfect fifth, equal-tempered (2^(7/12)) rather than the just 3:2 = 1.5.
 // The voice transposes the whole polyphonic signal, so an ET ratio keeps the
@@ -224,6 +226,13 @@ struct PoggedDsp {
     // pre-pan). Indexed by Voice for clarity; only V_UP5/V_UP1/V_UP2 are used.
     DelayLine     sdl[N_VOICES];
     float         g_spread = 0.0f;    // smoothed 0..1
+    DelayLine     sdl_dry;            // SPREAD on the dry (gated by DRY DETUNE)
+    // POG3 DRY routing, all crossfaded: these are switches, and every hard
+    // switch in this file has turned out to click.
+    float g_in      = 1.0f;   // smoothed input gain
+    float g_dryatk  = 0.0f;   // dry through attack   0..1
+    float g_dryfilt = 0.0f;   // dry through filter   0..1
+    float g_drydet  = 0.0f;   // dry through detune   0..1 (ramps to 0.5 mix)
 
     // Smoothed pan positions (-1..+1), one per voice; gains are derived per
     // sample by pan_gains(). Smoothing the position rather than the two gains
@@ -292,6 +301,8 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->sh[V_UP2 ].setup(4.0f,  grain_up,  align);
     p->sh[V_UP1D].setup(2.0f,  grain_up,  align);
     p->sh[V_UP2D].setup(4.0f,  grain_up,  align);
+    // Detuned dry sits at unison; the LFO moves it around 1.0.
+    p->sh[V_DRYD].setup(1.0f,  grain_up,  align);
 
     // Fixed per-voice tone shaping — voices the octaves toward the POG2's
     // character rather than passing raw transposed grains:
@@ -311,9 +322,13 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->vfilt[V_UP2 ].setup(Biquad::HP, 220.0f, 0.707f, sr);
     p->vfilt[V_UP1D].setup(Biquad::HP, 140.0f, 0.707f, sr);
     p->vfilt[V_UP2D].setup(Biquad::HP, 220.0f, 0.707f, sr);
+    // The detuned dry doubles the DRY, so it must not be voiced at all — any
+    // colour here would show up as a comb against the untouched dry beside it.
+    p->vfilt[V_DRYD].setup(Biquad::HP, 5.0f, 0.707f, sr);
 
     // Sized for the longest delay SPREAD can ask for.
     const int spread_max = (int)(SPREAD_R_MAX_MS * 0.001f * sr) + 2;
+    p->sdl_dry.init(spread_max);
     p->sdl[V_UP5].init(spread_max);
     p->sdl[V_UP1].init(spread_max);
     p->sdl[V_UP2].init(spread_max);
@@ -321,7 +336,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
 #ifndef POGGED_NO_VOCODER
     // Same ratios as the shifters: FOCUS swaps the engine, not the tuning.
     const float pv_ratio[N_VOICES] = {
-        0.5f, 0.25f, FIFTH_RATIO, 2.0f, 4.0f, 2.0f, 4.0f
+        0.5f, 0.25f, FIFTH_RATIO, 2.0f, 4.0f, 2.0f, 4.0f, 1.0f
     };
     for (int v = 0; v < N_VOICES; ++v) {
         p->pv[v].init(sample_rate);
@@ -375,6 +390,9 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->p_dry = p->p_sub1 = p->p_sub2 = 0.0f;
     p->p_up5 = p->p_up1 = p->p_up2 = 0.0f;
     p->g_spread = 0.0f;
+    p->g_in = 1.0f;
+    p->g_dryatk = p->g_dryfilt = p->g_drydet = 0.0f;
+    p->sdl_dry.reset();
     p->sdl[V_UP5].reset();
     p->sdl[V_UP1].reset();
     p->sdl[V_UP2].reset();
@@ -418,6 +436,11 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // Re-cut the sub grains only when the range actually changes: setup()
     // re-inits the taps when the grain length moves, which restarts the grains.
     // That is fine for a setup switch but must not happen every block.
+    const float in_t     = std::clamp(p_->input_gain, 0.5f, 3.0f);
+    const float dryatk_t  = (p_->dry_attack > 0.5f) ? 1.0f : 0.0f;
+    const float dryfilt_t = (p_->dry_filter > 0.5f) ? 1.0f : 0.0f;
+    const float drydet_t  = (p_->dry_detune > 0.5f) ? 1.0f : 0.0f;
+
     const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
     const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
 
@@ -443,11 +466,14 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         const float c   = (det_ct * lfo) / 1200.0f;      // instantaneous cents
         const float r1 = 2.0f * std::pow(2.0f,  c);
         const float r2 = 4.0f * std::pow(2.0f, -c);
+        const float rd = std::pow(2.0f, c);         // dry copy, around unison
         p->sh[V_UP1D].set_ratio(r1);
         p->sh[V_UP2D].set_ratio(r2);
+        p->sh[V_DRYD].set_ratio(rd);
 #ifndef POGGED_NO_VOCODER
         p->pv[V_UP1D].set_ratio(r1);
         p->pv[V_UP2D].set_ratio(r2);
+        p->pv[V_DRYD].set_ratio(rd);
 #endif
     }
 
@@ -465,6 +491,10 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // their contribution can fade out continuously.
     act[V_UP1D] = (detune_on || p->g_detmix > 1e-4f) && act[V_UP1];
     act[V_UP2D] = (detune_on || p->g_detmix > 1e-4f) && act[V_UP2];
+    // The dry copy only exists when DRY DETUNE asks for it.
+    act[V_DRYD] = (detune_on || p->g_detmix > 1e-4f) &&
+                  (drydet_t > 0.5f || p->g_drydet > 1e-4f) &&
+                  (dry_t > 1e-4f || p->g_dry > 1e-4f);
     for (int v = 0; v < N_VOICES; ++v) {
         if (act[v] && !p->sh_live[v]) {                    // fresh grains
             p->sh[v].reset();
@@ -518,7 +548,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const uint32_t mask = p->mask;
 
     for (uint32_t i = 0; i < n_samples; ++i) {
-        const float x = in[i];
+        // INPUT GAIN is "the level of the signal seen at the input", so it is
+        // applied before everything — the ring the voices read, the dry, and
+        // both onset detectors, which therefore trigger on the boosted level
+        // exactly as they would on the pedal.
+        p->g_in += gc * (in_t - p->g_in);
+        const float x = in[i] * p->g_in;
 
         // Write first: voices read at least MARGIN samples behind wpos.
         ring[p->wpos & mask] = x;
@@ -617,6 +652,34 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             spread_mix(V_UP2, o, p->p_up2);
         }
 
+        // ── Dry path (POG3 DRY buttons) ──────────────────────────────────
+        // Chain order follows the POG2's own cycle (Attack, then LP Filter,
+        // then Detune are added in turn), so: detune -> attack -> filter.
+        // Every route is crossfaded rather than switched: these are buttons,
+        // and every hard switch in this file has clicked.
+        p->g_dryatk  += gc * (dryatk_t  - p->g_dryatk);
+        p->g_dryfilt += gc * (dryfilt_t - p->g_dryfilt);
+        p->g_drydet  += gc * (drydet_t  - p->g_drydet);
+
+        float d = p->g_dry * x;
+        // DRY DETUNE: mix in a detuned copy of the dry — a chorus, and the
+        // one thing that costs the dry its zero latency (the copy is a shifted
+        // voice, ~3 ms behind). Faithful: the hardware cannot detune the dry
+        // without processing it either.
+        if (act[V_DRYD]) {
+            const float dd = p->vfilt[V_DRYD].process(voice_raw(V_DRYD));
+            d = (1.0f - 0.5f * p->g_drydet) * d + (0.5f * p->g_drydet) * (p->g_dry * dd);
+        }
+        // SPREAD reaches the dry only through DRY DETUNE — the manual gates it
+        // on that same button.
+        p->sdl_dry.write(d);
+        const float d_spread = p->g_drydet;
+        float dl_dry = d, dr_dry = d;
+        if (d_spread > 1e-4f) {
+            dl_dry = d + d_spread * (p->sdl_dry.read(dl_s) - d);
+            dr_dry = d + d_spread * (p->sdl_dry.read(dr_s) - d);
+        }
+
         // Attack/swell. The detector always runs so its RMS state is warm
         // when the user raises attack_ms mid-note.
         const bool onset = p->det.process(x, sens);
@@ -649,6 +712,21 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         } else {
             p->env_level = 1.0f;
         }
+        // DRY ATTACK: lerp between untouched and swelled, so the button fades.
+        {
+            const float e = 1.0f + p->g_dryatk * (p->env_level - 1.0f);
+            dl_dry *= e; dr_dry *= e;
+        }
+        // DRY FILTER: split the dry between the pre-filter and post-filter
+        // buses. Crossfading the ROUTE, not muting a branch — at rest it is
+        // wholly on one side, mid-flip it is smoothly shared.
+        pan_gains(p->p_dry, gl, gr);
+        const float pre_l = p->g_dryfilt * gl * dl_dry;
+        const float pre_r = p->g_dryfilt * gr * dr_dry;
+        const float post_l = (1.0f - p->g_dryfilt) * gl * dl_dry;
+        const float post_r = (1.0f - p->g_dryfilt) * gr * dr_dry;
+        wet_l += pre_l;
+        wet_r += pre_r;
 
         // Filter sweep (POG3 ENV). The detector always runs so its RMS state
         // is warm if the sweep is enabled mid-note; it is separate from the
@@ -693,10 +771,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             wet_r += p->g_filtmix * (fr - wet_r);
         }
 
-        // Dry is panned too (a POG3 voice) but still never delayed or filtered.
-        const float d = p->g_dry * x;
-        pan_gains(p->p_dry, gl, gr);
-        out_l[i] = soft_clip((wet_l + gl * d) * p->g_out);
-        out_r[i] = soft_clip((wet_r + gr * d) * p->g_out);
+        out_l[i] = soft_clip((wet_l + post_l) * p->g_out);
+        out_r[i] = soft_clip((wet_r + post_r) * p->g_out);
     }
 }

@@ -35,6 +35,7 @@ static void render(bool dry_voice, float pan, double& l_rms, double& r_rms,
     PoggedDsp* dsp = pogged_dsp_new(SR);
     PoggedParams p = {};
     p.out_level   = 1.0f;
+    p.input_gain  = 1.0f;   // 0 would clamp to 0.5: a silent 6 dB cut
     p.lp_cutoff   = 20000.0f;
     p.lp_q        = 0.707f;
     p.attack_sens = 0.35f;

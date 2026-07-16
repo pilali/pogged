@@ -26,7 +26,9 @@ components).
 
 | Control | Range | What it does |
 |---|---|---|
+| Input Gain | 0.5–3× | Level seen at the input — it feeds the voices, the dry and the onset detectors, as on the pedal. |
 | Dry | 0–200 % | Level of the untouched input (zero latency). |
+| Dry: Attack / Filter / Detune | on/off | Route the dry through each effect (POG3). All off = the untouched, undelayed dry that defines a POG. **Dry: Detune** also gates Spread onto the dry, and costs the dry its zero latency — a detuned dry is a shifted dry. |
 | Sub Octave | 0–200 % | −1 octave voice. |
 | Sub −2 Oct | 0–200 % | −2 octaves voice. |
 | 5th Up | 0–200 % | Fifth above (equal-tempered). A POG3 voice. |

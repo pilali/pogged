@@ -42,7 +42,11 @@ PAN_DEFAULTS.update({"filter_mode": 0.0, "filter_env": 0.0,
                      "range_mode": 0.0,
                      # Focus likewise: latency vs chord purity is the player's
                      # call, not a preset's. Ships granular = the POG sound.
-                     "focus": 0.0})
+                     "focus": 0.0,
+                     # Input gain is a rig-level trim, and the DRY buttons ship
+                     # off: an untouched dry is what makes a POG a POG.
+                     "input_gain": 1.0, "dry_attack": 0.0,
+                     "dry_filter": 0.0, "dry_detune": 0.0})
 
 
 def P(name, **vals):
@@ -109,6 +113,7 @@ ORDER = sorted([
     "pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2",
     "spread", "filter_mode", "filter_env", "filter_env_a", "filter_env_d",
     "filter_sens", "range_mode", "focus",
+    "input_gain", "dry_attack", "dry_filter", "dry_detune",
 ])
 
 

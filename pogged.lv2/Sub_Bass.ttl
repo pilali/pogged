@@ -20,6 +20,15 @@
 		lv2:symbol "detune_cents" ;
 		pset:value 0.0
 	] , [
+		lv2:symbol "dry_attack" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "dry_detune" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "dry_filter" ;
+		pset:value 0.0
+	] , [
 		lv2:symbol "dry_level" ;
 		pset:value 0.6
 	] , [
@@ -40,6 +49,9 @@
 	] , [
 		lv2:symbol "focus" ;
 		pset:value 0.0
+	] , [
+		lv2:symbol "input_gain" ;
+		pset:value 1.0
 	] , [
 		lv2:symbol "lp_cutoff" ;
 		pset:value 700.0

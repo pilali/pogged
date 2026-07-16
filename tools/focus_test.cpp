@@ -47,7 +47,10 @@ static void render(const std::vector<float>& in, float focus,
 {
     PoggedDsp* d = pogged_dsp_new(SR);
     PoggedParams p = {};
-    p.out_level = 1.0f; p.lp_cutoff = 20000.0f; p.lp_q = 0.707f;
+    p.out_level  = 1.0f;
+    p.input_gain = 1.0f;    // 0 would clamp to 0.5: a silent 6 dB cut
+    p.lp_cutoff  = 20000.0f;
+    p.lp_q       = 0.707f;
     p.attack_sens = 0.35f; p.sub1_level = 1.0f; p.focus = focus;
     l.assign(N, 0.0f); r.assign(N, 0.0f);
     for (int i = 0; i < N; i += BLOCK)
@@ -91,7 +94,10 @@ int main()
     //    latency, so this is only smooth because of the crossfade.
     PoggedDsp* d = pogged_dsp_new(SR);
     PoggedParams p = {};
-    p.out_level = 1.0f; p.lp_cutoff = 20000.0f; p.lp_q = 0.707f;
+    p.out_level  = 1.0f;
+    p.input_gain = 1.0f;
+    p.lp_cutoff  = 20000.0f;
+    p.lp_q       = 0.707f;
     p.attack_sens = 0.35f; p.sub1_level = 1.0f; p.focus = 0.0f;
     std::vector<float> ol(N), orr(N);
     for (int i = 0; i < N; i += BLOCK) {

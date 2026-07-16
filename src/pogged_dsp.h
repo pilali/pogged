@@ -55,6 +55,18 @@ typedef struct {
     float focus;         /* idx 28 [0/1]  engine: 0 = granular (POG-style, low
                                             latency), 1 = phase vocoder (clean
                                             on chords, ~85 ms). POG3's FOCUS.  */
+    float input_gain;    /* idx 29 [0.5 – 3]  POG3 INPUT GAIN: the level seen
+                                            at the input, so it feeds the
+                                            voices, the dry AND the onset
+                                            detectors — as on the pedal.      */
+    /* POG3 DRY buttons: route the dry through each effect. Off = the POG's
+       defining undelayed, unprocessed dry. */
+    float dry_attack;    /* idx 30 [0/1]  dry through the attack swell        */
+    float dry_filter;    /* idx 31 [0/1]  dry through the filter              */
+    float dry_detune;    /* idx 32 [0/1]  dry through the detune chorus — and
+                                          through SPREAD, which the manual
+                                          gates on this same button. Costs the
+                                          dry its zero latency.               */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

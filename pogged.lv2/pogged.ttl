@@ -311,4 +311,45 @@
         lv2:portProperty lv2:integer, lv2:enumeration ;
         lv2:scalePoint [ rdfs:label "Granular (fast)" ; rdf:value 0 ] ;
         lv2:scalePoint [ rdfs:label "Vocoder (clean)" ; rdf:value 1 ]
+    ] ,
+
+    # ── Input gain + DRY routing (POG3) ──────────────────────────────────
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   29 ;
+        lv2:symbol  "input_gain" ;
+        lv2:name    "Input Gain" ;
+        lv2:minimum 0.5 ;
+        lv2:maximum 3.0 ;
+        lv2:default 1.0
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   30 ;
+        lv2:symbol  "dry_attack" ;
+        lv2:name    "Dry: Attack" ;
+        lv2:minimum 0 ;
+        lv2:maximum 1 ;
+        lv2:default 0 ;
+        lv2:portProperty lv2:integer, lv2:toggled
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   31 ;
+        lv2:symbol  "dry_filter" ;
+        lv2:name    "Dry: Filter" ;
+        lv2:minimum 0 ;
+        lv2:maximum 1 ;
+        lv2:default 0 ;
+        lv2:portProperty lv2:integer, lv2:toggled
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   32 ;
+        lv2:symbol  "dry_detune" ;
+        lv2:name    "Dry: Detune" ;
+        lv2:minimum 0 ;
+        lv2:maximum 1 ;
+        lv2:default 0 ;
+        lv2:portProperty lv2:integer, lv2:toggled
     ] .

@@ -44,7 +44,9 @@ static double ripple_db(const std::vector<float>& in, float range, float f_low_u
     (void)f_low_unused;
     PoggedDsp* d = pogged_dsp_new(SR);
     PoggedParams p = {};
-    p.out_level = 1.0f; p.lp_cutoff = 20000.0f; p.lp_q = 0.707f;
+    p.out_level = 1.0f;
+    p.input_gain  = 1.0f;   // 0 would clamp to 0.5: a silent 6 dB cut
+    p.lp_cutoff = 20000.0f; p.lp_q = 0.707f;
     p.attack_sens = 0.35f; p.sub1_level = 1.0f; p.range_mode = range;
     std::vector<float> l(N), r(N);
     for (int i = 0; i < N; i += BLOCK)
