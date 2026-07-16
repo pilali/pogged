@@ -37,6 +37,16 @@ typedef struct {
     float spread;        /* idx 21 [0 – 1]   POG3 SPREAD: stereo delay on
                                              +5th/+1/+2 only. R is 3x L
                                              (L<=50ms, R<=150ms). 0 = off. */
+    /* POG3 multimode filter + envelope sweep. lp_cutoff/lp_q above keep their
+       "lp_" symbols: a symbol is the port's identity and renaming it would
+       orphan saved state. They now mean the filter's frequency and Q in every
+       mode. */
+    float filter_mode;   /* idx 22 [0/1/2]   0 = LP (default), 1 = BP, 2 = HP */
+    float filter_env;    /* idx 23 [-1 – 1]  sweep depth; 0 = envelope off,
+                                             + sweeps up, - sweeps down       */
+    float filter_env_a;  /* idx 24 [1 – 1000]   ms, sweep attack              */
+    float filter_env_d;  /* idx 25 [1 – 2000]   ms, sweep decay               */
+    float filter_sens;   /* idx 26 [0 – 1]   sweep trigger sensitivity        */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

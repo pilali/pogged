@@ -221,4 +221,61 @@
         lv2:minimum 0.0 ;
         lv2:maximum 1.0 ;
         lv2:default 0.0
+    ] ,
+
+    # ── Multimode filter + envelope sweep (POG3) ─────────────────────────
+    # lp_cutoff / lp_q above keep their "lp_" symbols — a symbol is a port's
+    # identity — but now mean the filter frequency and Q in every mode.
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   22 ;
+        lv2:symbol  "filter_mode" ;
+        lv2:name    "Filter Mode" ;
+        lv2:minimum 0 ;
+        lv2:maximum 2 ;
+        lv2:default 0 ;
+        lv2:portProperty lv2:integer, lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "Low Pass" ;  rdf:value 0 ] ;
+        lv2:scalePoint [ rdfs:label "Band Pass" ; rdf:value 1 ] ;
+        lv2:scalePoint [ rdfs:label "High Pass" ; rdf:value 2 ]
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index    23 ;
+        lv2:symbol   "filter_env" ;
+        lv2:name     "Filter Env" ;
+        lv2:minimum -1.0 ;
+        lv2:maximum  1.0 ;
+        lv2:default  0.0
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   24 ;
+        lv2:symbol  "filter_env_a" ;
+        lv2:name    "Filter Env Attack" ;
+        lv2:minimum    1.0 ;
+        lv2:maximum 1000.0 ;
+        lv2:default   50.0 ;
+        units:unit  units:ms ;
+        lv2:portProperty pprops:logarithmic
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   25 ;
+        lv2:symbol  "filter_env_d" ;
+        lv2:name    "Filter Env Decay" ;
+        lv2:minimum    1.0 ;
+        lv2:maximum 2000.0 ;
+        lv2:default  200.0 ;
+        units:unit  units:ms ;
+        lv2:portProperty pprops:logarithmic
+    ] ,
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   26 ;
+        lv2:symbol  "filter_sens" ;
+        lv2:name    "Filter Env Sens" ;
+        lv2:minimum 0.0 ;
+        lv2:maximum 1.0 ;
+        lv2:default 0.5
     ] .

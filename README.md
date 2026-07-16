@@ -4,8 +4,8 @@ Pogged is a **polyphonic octave generator** for guitar (and other mono
 sources), inspired by the Electro-Harmonix POG2: sub octave (−1), sub −2
 octaves, octave up (+1), two octaves up (+2), a chorus detune on the up
 voices, a pick-triggered attack/swell, and a resonant low-pass filter. It also
-takes from the newer POG3 the **fifth-up voice**, **per-voice panning** and
-**Spread**.
+takes from the newer POG3 the **fifth-up voice**, **per-voice panning**,
+**Spread**, and a **multimode filter with an envelope sweep**.
 
 **Mono in → stereo out.** Each of the six voices has its own pan.
 
@@ -33,8 +33,13 @@ components).
 | Detune | 0–25 cents | Chorus on the +1/+2 voices. Raises the LFO's depth *and* rate together, as on the POG2. |
 | Attack | 0–2000 ms | Per-pick volume swell on the wet signal (0 = off). |
 | Attack Sens | 0–100 % | Onset-detector sensitivity for the swell trigger. |
-| LP Filter | 20 Hz–20 kHz | Low-pass on the wet mix (≥19 kHz = bypass). Dry is unfiltered. |
+| Filter Mode | LP / BP / HP | Multimode resonant filter on the wet mix (POG3). |
+| LP Filter | 20 Hz–20 kHz | Filter frequency, in every mode. Bypasses at each mode's transparent end (LP ≥19 kHz, HP ≤21 Hz); band-pass has no off position. Dry is unfiltered. |
 | Resonance | Q 0.5–8 | Filter resonance. |
+| Filter Env | −100…+100 % | Sweeps the filter frequency on each pick — up (+) or down (−), ±4 octaves at full. Centre = off (POG3). |
+| Filter Env Attack | 1–1000 ms | Sweep rise time. |
+| Filter Env Decay | 1–2000 ms | Sweep fall time. |
+| Filter Env Sens | 0–100 % | Sweep trigger sensitivity — separate from Attack Sens, as on the POG3. |
 | Output | 0–200 % | Master output gain into a soft clipper. |
 | Pan (×6) | L–C–R | Per-voice placement in the stereo field (dry, −1, −2, +5th, +1, +2). Centre is full level on **both** outputs, so a single output still carries everything. |
 | Spread | 0–100 % | POG3 stereo delay on the +5th/+1/+2 voices — right channel 3× longer than left (≤150 ms / ≤50 ms). The sub octaves are excluded, as on the hardware. 0 = off (bit-transparent). |

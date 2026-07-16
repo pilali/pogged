@@ -42,7 +42,12 @@ enum Port : uint32_t {
     P_PAN_UP1      = 19,
     P_PAN_UP2      = 20,
     P_SPREAD       = 21,   // POG3 stereo delay  [0 – 1]
-    P_COUNT        = 22
+    P_FILTER_MODE  = 22,   // 0 = LP, 1 = BP, 2 = HP
+    P_FILTER_ENV   = 23,   // sweep depth        [-1 – 1]
+    P_FILTER_ENV_A = 24,   // sweep attack       [1 – 1000] ms
+    P_FILTER_ENV_D = 25,   // sweep decay        [1 – 2000] ms
+    P_FILTER_SENS  = 26,   // sweep trigger sens [0 – 1]
+    P_COUNT        = 27
 };
 
 // Control ports are 2..13 and 15..20; index 14 is audio, so the ctl[] slot at
@@ -120,6 +125,11 @@ static void run(LV2_Handle handle, uint32_t n_samples)
         ctl(p, P_PAN_UP1),
         ctl(p, P_PAN_UP2),
         ctl(p, P_SPREAD),
+        ctl(p, P_FILTER_MODE),
+        ctl(p, P_FILTER_ENV),
+        ctl(p, P_FILTER_ENV_A),
+        ctl(p, P_FILTER_ENV_D),
+        ctl(p, P_FILTER_SENS),
     };
 
     pogged_dsp_process(p->dsp, &params, p->audio_in,

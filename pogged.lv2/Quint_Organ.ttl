@@ -23,6 +23,21 @@
 		lv2:symbol "dry_level" ;
 		pset:value 0.4
 	] , [
+		lv2:symbol "filter_env" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "filter_env_a" ;
+		pset:value 50.0
+	] , [
+		lv2:symbol "filter_env_d" ;
+		pset:value 200.0
+	] , [
+		lv2:symbol "filter_mode" ;
+		pset:value 0.0
+	] , [
+		lv2:symbol "filter_sens" ;
+		pset:value 0.5
+	] , [
 		lv2:symbol "lp_cutoff" ;
 		pset:value 3000.0
 	] , [

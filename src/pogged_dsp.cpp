@@ -79,6 +79,18 @@ static inline void pan_gains(float pan, float& gl, float& gr) noexcept {
     gr = (pan >= 0.0f) ? 1.0f : 1.0f + pan;
 }
 
+// filter_mode port -> Biquad::Type. The port follows the POG3's own menu order
+// ("Low-Pass (default), Band-Pass, High-Pass"); Biquad happens to order its
+// enum LP/HP/BP. The two orders are unrelated, so map explicitly: casting one
+// onto the other silently swaps BP and HP.
+static inline Biquad::Type filter_mode_of(float v) noexcept {
+    switch ((int)std::clamp(v, 0.0f, 2.0f)) {
+    case 1:  return Biquad::BP;
+    case 2:  return Biquad::HP;
+    default: return Biquad::LP;
+    }
+}
+
 // ── Voice bank layout ────────────────────────────────────────────────────────
 // Internal ordering only — nothing persists these, so they are free to be
 // grouped logically (the LV2 port order is fixed separately in pogged_dsp.h).
@@ -104,6 +116,16 @@ static constexpr float DET_RATE_MAX = 3.0f;    // Hz, at detune = 25 cents
 static constexpr float SPREAD_L_MAX_MS = 50.0f;
 static constexpr float SPREAD_R_MAX_MS = 150.0f;   // = 3x left
 
+// POG3 filter envelope: the ENV knob sweeps the filter frequency up (CW) or
+// down (CCW) from the slider's setting; centre disables it. The manual gives
+// no depth in octaves — 4 is a musical full-scale sweep and is the obvious
+// knob to revisit by ear.
+static constexpr float ENV_SWEEP_OCTAVES = 4.0f;
+// Filter coefficients are refreshed on this stride while the sweep moves.
+// Per-sample would mean transcendentals per sample per channel; 16 samples is
+// a 3 kHz control rate at 48k, far above anything a filter sweep resolves.
+static constexpr int   FILT_UPDATE_STRIDE = 16;
+
 struct PoggedDsp {
     double sample_rate = 48000.0;
 
@@ -120,6 +142,14 @@ struct PoggedDsp {
     Biquad        vfilt[N_VOICES];   // fixed per-voice tone shaping (voicing)
     Envelope      env;
     OnsetDetector det;
+    // Filter sweep: its own envelope and its own onset detector, because the
+    // POG3 gives the sweep a Trigger Sensitivity separate from the ATTACK
+    // slider's — the two effects can key off different playing dynamics.
+    Envelope      filt_env;
+    OnsetDetector filt_det;
+    float         filt_env_level = 0.0f;
+    int           filt_ctr       = 0;    // coefficient-refresh stride counter
+    int           cached_mode    = -1;
 
     // Smoothed gains (per-sample one-pole, ~30 ms)
     float g_dry = 1.0f, g_sub1 = 0.0f, g_sub2 = 0.0f;
@@ -212,6 +242,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->sdl[V_UP2].init(spread_max);
 
     p->det.init(sr);
+    p->filt_det.init(sr);
     pogged_dsp_reset(p);
     return p;
 }
@@ -234,6 +265,11 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->filter_r.reset();
     p->env.reset();
     p->det.reset();
+    p->filt_env.reset();
+    p->filt_det.reset();
+    p->filt_env_level = 0.0f;
+    p->filt_ctr       = 0;
+    p->cached_mode    = -1;
     p->smooth_cutoff = -1.0f;
     p->smooth_q      = 0.707f;
     p->cached_cutoff = p->cached_q = -1.0f;
@@ -279,6 +315,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float pup1_t  = std::clamp(p_->pan_up1,     -1.0f, 1.0f);
     const float pup2_t  = std::clamp(p_->pan_up2,     -1.0f, 1.0f);
     const float spread_t = std::clamp(p_->spread,      0.0f, 1.0f);
+    const Biquad::Type mode = filter_mode_of(p_->filter_mode);
+    const float fenv_d  = std::clamp(p_->filter_env,   -1.0f, 1.0f);
+    const float fenv_a  = std::clamp(p_->filter_env_a,  1.0f, 1000.0f);
+    const float fenv_dc = std::clamp(p_->filter_env_d,  1.0f, 2000.0f);
+    const float fsens   = std::clamp(p_->filter_sens,   0.0f, 1.0f);
+    const bool  fenv_on = std::abs(fenv_d) > 1e-3f;   // ENV centred = off
 
     const bool detune_on = det_ct > 0.5f;
     const bool env_on    = atk_ms > 1.0f;
@@ -324,6 +366,10 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 
     // ── Attack envelope (A-only ADSR: decay 0, sustain 1) ─────────────────
     p->env.set(atk_ms, 0.0f, 1.0f, 60.0f, sr);
+    // Filter sweep envelope: AD (sustain 0) — it rises on the pick then falls
+    // back to the slider's frequency, which is what a filter sweep is.
+    p->filt_env.set(fenv_a, fenv_dc, 0.0f, 60.0f, sr);
+    const float ny = std::min(sr * 0.499f, 20000.0f);
     const int sil_max = (int)(0.150f * sr);           // 150 ms under -60 dBFS
     constexpr float SIL_GATE = 1e-6f;                 // -60 dBFS (power)
 
@@ -340,17 +386,16 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         if (std::abs(p->smooth_q - q) < 0.001f * q)
             p->smooth_q = q;
     }
-    // Bypass ≥19 kHz. The filter coefficients are refreshed while active; the
-    // filter is NOT reset on entering bypass — the crossfade below fades its
-    // contribution out, and resetting mid-fade would itself click.
-    const bool bypass = p->smooth_cutoff >= 19000.0f;
-    if (!bypass &&
-        (p->smooth_cutoff != p->cached_cutoff || p->smooth_q != p->cached_q)) {
-        p->filter_l.setup(Biquad::LP, p->smooth_cutoff, p->smooth_q, sr);
-        p->filter_r.setup(Biquad::LP, p->smooth_cutoff, p->smooth_q, sr);
-        p->cached_cutoff = p->smooth_cutoff;
-        p->cached_q      = p->smooth_q;
-    }
+    // Bypass is mode-dependent. "Cutoff at max = filter off" is a low-pass
+    // idiom: in high-pass, 19 kHz is a legitimate (near-silent) setting, not an
+    // off switch, and a band-pass has no off position at all. So bypass only at
+    // each mode's own transparent end, and never in BP. This keeps the existing
+    // LP presets (lp_cutoff = 20000 means "off") behaving exactly as before.
+    // The filter is NOT reset on entering bypass — the crossfade below fades
+    // its contribution out, and resetting mid-fade would itself click.
+    const bool bypass =
+        (mode == Biquad::LP && p->smooth_cutoff >= 19000.0f) ||
+        (mode == Biquad::HP && p->smooth_cutoff <= 21.0f);
 
     // Per-sample gain smoothing coefficient (~30 ms)
     const float gc = 1.0f - std::exp(-1.0f / (0.030f * sr));
@@ -474,7 +519,39 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             p->env_level = 1.0f;
         }
 
-        // Crossfade the LP in/out (g_filtmix ramps 0..1). Feed the filters
+        // Filter sweep (POG3 ENV). The detector always runs so its RMS state
+        // is warm if the sweep is enabled mid-note; it is separate from the
+        // ATTACK detector because the POG3 gives the sweep its own Trigger
+        // Sensitivity.
+        const bool fonset = p->filt_det.process(x, fsens);
+        if (fenv_on) {
+            if (fonset) p->filt_env.trigger();
+            p->filt_env_level = p->filt_env.process();
+        } else {
+            p->filt_env_level = 0.0f;
+        }
+
+        // Refresh coefficients on a stride rather than per sample (see
+        // FILT_UPDATE_STRIDE). Frequency, Q and mode are all cached together —
+        // the mode has to be in the key or switching LP→BP would keep the old
+        // coefficients until the frequency happened to move.
+        if (--p->filt_ctr <= 0) {
+            p->filt_ctr = FILT_UPDATE_STRIDE;
+            const float f = std::clamp(
+                p->smooth_cutoff *
+                    std::exp2(fenv_d * p->filt_env_level * ENV_SWEEP_OCTAVES),
+                20.0f, ny);
+            if (f != p->cached_cutoff || p->smooth_q != p->cached_q ||
+                (int)mode != p->cached_mode) {
+                p->filter_l.setup(mode, f, p->smooth_q, sr);
+                p->filter_r.setup(mode, f, p->smooth_q, sr);
+                p->cached_cutoff = f;
+                p->cached_q      = p->smooth_q;
+                p->cached_mode   = (int)mode;
+            }
+        }
+
+        // Crossfade the filter in/out (g_filtmix ramps 0..1). Feed the filters
         // whenever the mix is non-trivial so their state stays coherent
         // through the fade; at steady bypass (mix 0) they are skipped.
         p->g_filtmix += gc * ((bypass ? 0.0f : 1.0f) - p->g_filtmix);

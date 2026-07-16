@@ -68,6 +68,7 @@ clean:
 #   detune_test — detune sweeps (chorus) rather than sitting at a fixed offset
 #   pan_test    — mono->stereo path + per-voice pan law
 #   spread_test — POG3 SPREAD: R delayed 3x L, suboctaves excluded
+#   filter_test — LP/BP/HP modes + envelope sweep
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -79,12 +80,14 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/detune_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/detune_test
 	$(CXX) $(AUDIT_FLAGS) tools/pan_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/pan_test
 	$(CXX) $(AUDIT_FLAGS) tools/spread_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/spread_test
+	$(CXX) $(AUDIT_FLAGS) tools/filter_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/filter_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
 	@$(AUDIT_DIR)/detune_test
 	@$(AUDIT_DIR)/pan_test
 	@$(AUDIT_DIR)/spread_test
+	@$(AUDIT_DIR)/filter_test
 	@echo "AUDIT OK"
 
 .PHONY: audit

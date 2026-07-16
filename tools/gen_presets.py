@@ -32,6 +32,11 @@ URI  = "https://github.com/pilali/pogged"
 PAN_DEFAULTS = {s: 0.0 for s in
                 ("pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2",
                  "spread")}
+# Filter defaults: LP, envelope sweep off. A preset only spells out what it
+# actually changes.
+PAN_DEFAULTS.update({"filter_mode": 0.0, "filter_env": 0.0,
+                     "filter_env_a": 50.0, "filter_env_d": 200.0,
+                     "filter_sens": 0.5})
 
 
 def P(name, **vals):
@@ -96,7 +101,8 @@ ORDER = sorted([
     "up5_level", "detune_cents", "attack_ms", "attack_sens", "lp_cutoff",
     "lp_q", "out_level",
     "pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2",
-    "spread",
+    "spread", "filter_mode", "filter_env", "filter_env_a", "filter_env_d",
+    "filter_sens",
 ])
 
 

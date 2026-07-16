@@ -49,6 +49,18 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     // POG3 SPREAD: stereo delay on the +5th/+1/+2 voices (R = 3x L).
     p.add(std::make_unique<AF>(pid("spread"),   "Spread",           Range(0.0f, 1.0f), 0.0f));
 
+    // Multimode filter + envelope sweep (POG3). Mode order follows the POG3
+    // menu: Low-Pass, Band-Pass, High-Pass.
+    Range envAtkRange(1.0f, 1000.0f);  envAtkRange.setSkewForCentre(80.0f);
+    Range envDcyRange(1.0f, 2000.0f);  envDcyRange.setSkewForCentre(250.0f);
+    p.add(std::make_unique<juce::AudioParameterChoice>(
+        pid("filter_mode"), "Filter Mode",
+        juce::StringArray { "Low Pass", "Band Pass", "High Pass" }, 0));
+    p.add(std::make_unique<AF>(pid("filter_env"),   "Filter Env",        Range(-1.0f, 1.0f), 0.0f));
+    p.add(std::make_unique<AF>(pid("filter_env_a"), "Filter Env Attack", envAtkRange, 50.0f, FA{}.withLabel("ms")));
+    p.add(std::make_unique<AF>(pid("filter_env_d"), "Filter Env Decay",  envDcyRange, 200.0f, FA{}.withLabel("ms")));
+    p.add(std::make_unique<AF>(pid("filter_sens"),  "Filter Env Sens",   Range(0.0f, 1.0f), 0.5f));
+
     return p;
 }
 
@@ -78,6 +90,11 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pPanUp1  = raw("pan_up1");
     pPanUp2  = raw("pan_up2");
     pSpread  = raw("spread");
+    pFiltMode = raw("filter_mode");
+    pFiltEnv  = raw("filter_env");
+    pFiltEnvA = raw("filter_env_a");
+    pFiltEnvD = raw("filter_env_d");
+    pFiltSens = raw("filter_sens");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -127,7 +144,9 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pDetune->load(), pAttack->load(), pSens->load(),
         pCutoff->load(), pQ->load(), pOut->load(), pUp5->load(),
         pPanDry->load(), pPanSub1->load(), pPanSub2->load(),
-        pPanUp5->load(), pPanUp1->load(), pPanUp2->load(), pSpread->load()
+        pPanUp5->load(), pPanUp1->load(), pPanUp2->load(), pSpread->load(),
+        pFiltMode->load(), pFiltEnv->load(), pFiltEnvA->load(),
+        pFiltEnvD->load(), pFiltSens->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.
