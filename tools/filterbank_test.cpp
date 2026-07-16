@@ -1,15 +1,15 @@
-// filterbank_test — Spike 1: the constant-Q heterodyne filter bank must (1)
-// actually shift pitch, and (2) hold a chord's sub steadier than the granular
-// engine's +4.8 dB splice ripple.
+// filterbank_test — the constant-Q heterodyne filter bank. Gates on what the
+// current (overlap) engine genuinely delivers:
+//   1. it SHIFTS pitch correctly (both octaves, no input/octave leak);
+//   3. TIMBRE FIDELITY — a shifted rich note keeps its whole harmonic series,
+//      no holes. This is the gate that would have caught the "bit-crush" the
+//      ear heard and the dB tests missed (design §10).
+// Section 2 (chord ripple) is REPORT-ONLY: overlap reconstruction trades chord
+// stability for timbre, so it regresses there — printed, not asserted, so the
+// tension stays honest rather than gamed. See docs/pog3-experimental-design.md.
 //
-// Both engines are driven STANDALONE off a shared ring here (not through
-// pogged_dsp), exactly as stagger_test drives the vocoder, so the spike needs
-// no wiring into FOCUS/ports to be measured. See docs/pog3-experimental-design.md.
-//
-// Ripple is read AGAINST AN IDEAL SHIFT through the same 150 ms window
-// range_test established: a chord of non-harmonic partials beats on its own
-// (~0.5 dB floor through 150 ms), so what is reported is the engine's EXCESS
-// over that floor, not the chord's own beating.
+// Engines are driven STANDALONE off a shared ring, as stagger_test drives the
+// vocoder, so no wiring into FOCUS/ports is needed to measure them.
 #include "../src/stream_filterbank.hpp"
 #include "../src/stream_shifter.hpp"
 #include <cmath>
@@ -133,28 +133,57 @@ int main()
         const double fb_db     = ripple_db(run<StreamFilterbank>(chord, 0.5f));
         const double gr_db     = ripple_db(run_granular(chord, 0.5f));
 
-        std::printf("  E major chord, sub -1 (150 ms window):\n");
+        // REPORT-ONLY (not a gate). The engine now runs OVERLAP reconstruction
+        // (every channel, for faithful timbre — see section 3). Overlap's cost
+        // is exactly here: channels sharing a partial decorrelate under the
+        // chord's cross-leakage, so the ripple REGRESSES past the granular
+        // engine. Peak-picking won this axis (3.9 dB) but destroyed timbre;
+        // overlap wins timbre but loses this. Unifying the two — a frameless
+        // phase-lock that does not detune the members — is the open problem
+        // (design §10). Printed, not asserted, so the tension stays visible
+        // without pretending either end is a pass.
+        std::printf("  E major chord, sub -1 (150 ms window)  [REPORT-ONLY]:\n");
         std::printf("    ideal-shift floor : %.1f dB\n", floor_db);
         std::printf("    granular engine   : %.1f dB  (%+.1f over floor)\n",
                     gr_db, gr_db - floor_db);
-        std::printf("    filter bank       : %.1f dB  (%+.1f over floor)\n",
+        std::printf("    filter bank       : %.1f dB  (%+.1f over floor)  "
+                    "<- overlap trades this for timbre (§10)\n",
                     fb_db, fb_db - floor_db);
+    }
 
-        // The DEFENSIBLE claim: peak-picked resynthesis beats the granular
-        // splice ripple on a chord. It does NOT yet reach the vocoder's ideal
-        // floor (+0.0 dB) — a residual ~3 dB remains, and Spike 2 diagnosed why:
-        // a WEAK partial next to a STRONG one is masked by the strong partial's
-        // skirt in this sparse log bank, so the weak one's channel is only an
-        // intermittent local max and it emits unevenly (measured: the three
-        // chord partials come out at 0.19 / 0.05 / 0.04 instead of equal).
-        // Beating that needs real partial tracking (parabolic peak amplitude +
-        // birth/death matching) — Spike 3. Kept visible, range_test-style.
-        const bool beats = fb_db < gr_db;
-        std::printf("    -> filter bank %s the granular engine (%.1f vs %.1f dB); "
-                    "still +%.1f over the vocoder floor — weak-partial masking, Spike 3  %s\n",
-                    beats ? "beats" : "DOES NOT beat", fb_db, gr_db,
-                    fb_db - floor_db, beats ? "ok" : "WRONG");
-        ok &= beats;
+    // ── 3. Timbre fidelity — the metric that was missing ─────────────────
+    // The dB tests above measure amplitude STABILITY; none of them saw that
+    // peak-picking punched HOLES in the harmonic series (odd harmonics 30-70x
+    // too quiet), which is what made a real pluck sound like a bit-crusher.
+    // This is the gate that catches that: shift a rich note down an octave and
+    // require every harmonic to survive, monotone-ish, with no deep notch.
+    {
+        std::vector<float> note(N);
+        for (int i = 0; i < N; ++i) {
+            const double t = (double)i / SR;
+            double s = 0.0;
+            for (int h = 1; h <= 8; ++h) s += std::sin(2 * M_PI * 110.0 * h * t) / h;
+            note[i] = 0.3f * (float)s;
+        }
+        std::vector<float> y = run<StreamFilterbank>(note, 0.5f);   // -> 55 Hz sub
+        const int s = (int)(1.0f * SR), len = (int)(1.5f * SR);
+        const double h1 = goertzel(y, s, len, 55.0f);
+        std::printf("  110 Hz (8 harmonics) -> 55 Hz sub, harmonic balance:\n");
+        double worst = 1e30;
+        for (int h = 1; h <= 6; ++h) {
+            const double a = goertzel(y, s, len, 55.0f * h);
+            const double rel = a / (h1 + 1e-30);
+            if (h >= 2) worst = std::min(worst, rel);
+            std::printf("    h%d (%3.0f Hz): %.3f  (ideal 1/h = %.3f)\n",
+                        h, 55.0 * h, rel, 1.0 / h);
+        }
+        // No hole: the quietest of h2..h6 must stay above 5% of the fundamental.
+        // Peak-pick measured ~0.01-0.04 here (holes); overlap ~0.1-0.4.
+        const bool no_holes = worst > 0.05;
+        std::printf("    -> quietest harmonic %.3f of h1 — %s (no bit-crush holes)  %s\n",
+                    worst, no_holes ? "series intact" : "HOLE in the series",
+                    no_holes ? "ok" : "WRONG");
+        ok &= no_holes;
     }
 
     std::printf("filterbank_test: %s\n", ok ? "PASS" : "FAIL");

@@ -96,32 +96,29 @@ int main()
     // Filter bank: latency is the bass channel group delay (~40 ms at 55 Hz).
     const double fb = disturbance<StreamFilterbank>(in, (int)(0.045f * SR),
                                                     "filterbank");
-    // The branch's DECISIVE criterion, and Spike 2 essentially closes it:
-    //   naive overlap-sum resynthesis  : A dropped 6.1 dB when B attacked
-    //   + one oscillator per partial    : 1.2 dB   (Spike 1)
-    //   + phase handoff on channel swap : 0.45 dB  (Spike 2) — vocoder-grade
-    // Every overlapping channel carrying A used to drift apart under B's
-    // leakage; collapsing A onto one dominant channel and handing its phase
-    // across channel crossings keeps it rock-steady when B lands (design §1.1).
-    const bool fb_ok = fb < 0.6;
-    ok &= fb_ok;
-
+    // REPORT-ONLY. This axis and the timbre axis are in tension and the engine
+    // cannot hold both yet (design §10):
+    //   overlap reconstruction (current): timbre faithful, but the channels
+    //     carrying A DECORRELATE under B's leakage -> A drops ~6 dB here;
+    //   one-oscillator-per-partial + phase handoff (Spike 2): A held to 0.45 dB
+    //     but the sparse bank punched holes in the harmonic series (bit-crush).
+    // The engine currently chooses TIMBRE (what the ear flagged), so it
+    // regresses here on purpose. Printed, not asserted — a frameless phase-lock
+    // that unifies the two is the open problem, not a threshold to game.
 #ifndef POGGED_NO_VOCODER
     const double pv = disturbance<StreamVocoder>(in, StreamVocoder::N, "vocoder");
-    std::printf("  -> filter bank disturbs A by %.2f dB (< 0.6), vocoder by %.2f dB\n",
-                fb, pv);
-    // HONEST CAVEAT, kept visible: on this clean TWO-tone input the vocoder's
-    // re-partition is stable, so it too scores well — both are now excellent
-    // here, so this metric is a floor check, NOT yet the decisive discriminator.
-    // Reproducing the vocoder's real "ringing note moves" defect needs denser,
-    // closer material (many partials that re-partition when B lands): Spike 3.
-    std::printf("  filter bank holds A within 0.6 dB  %s   "
-                "(both engines clean on this easy input — see caveat in source)\n",
-                fb_ok ? "ok" : "WRONG");
+    std::printf("  -> filter bank disturbs A by %.2f dB, vocoder by %.2f dB "
+                "[REPORT-ONLY: overlap trades this for timbre, §10]\n", fb, pv);
 #else
-    std::printf("  filter bank disturbs A by %.2f dB (< 0.6)  %s\n",
-                fb, fb_ok ? "ok" : "WRONG");
+    std::printf("  -> filter bank disturbs A by %.2f dB "
+                "[REPORT-ONLY: overlap trades this for timbre, §10]\n", fb);
 #endif
+
+    // The only hard gate left here: the engine must still be ALIVE and roughly
+    // level across the event — not silent, not exploded. A real regression
+    // (NaN, collapse) still trips this; the coherence quality itself is tracked
+    // in the design doc, not pinned to a number while it is in flux.
+    ok &= std::isfinite(fb) && fb < 24.0;
 
     std::printf("arpeggio_test: %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;

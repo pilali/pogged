@@ -26,18 +26,24 @@
 //   out += ak·cos(θk),   θk += ratio·(ωk + dφk)  <-----------+   (resynth)
 //
 // Each channel is an INDEPENDENT, sample-by-sample oscillator. There is no
-// frame, no block boundary, no global re-partition: a new note excites only the
-// channels in its band and leaves every other channel's θk accumulating
-// undisturbed. That is the arpeggio criterion (§1.1), structural here — but only
-// if the RESYNTH does not undo it. Emitting every channel (Spike 1's first try)
-// did: a partial is carried by ~CPO/2 overlapping channels, and another note's
-// leakage pulls each channel's nonlinear frequency estimate differently, so they
-// decorrelate and cancel — a new attack DROPPED a ringing note by 6 dB, §1.1
-// inverted. The fix (Spike 2) is to emit ONE oscillator per partial — the local-
-// maximum channel — with a PHASE HANDOFF when a drifting partial crosses to the
-// next channel, so the crossover is seamless. That took the arpeggio disturbance
-// to ~0.4 dB (vocoder-comparable) and the chord sub below the granular engine.
-// See pass 2 in process().
+// frame, no block boundary. RESYNTH is OVERLAP: every channel above an adaptive
+// floor emits at ratio× its own instantaneous frequency, so the FULL harmonic
+// series is reconstructed and the timbre stays faithful.
+//
+// This is the current choice after three spikes (design §8-§10), and it is a
+// TRADE, not a win on every axis:
+//   - Overlap → faithful timbre, but the ~CPO/2 channels carrying one partial
+//     DECORRELATE under another note's leakage, so a chord/arpeggio wobbles
+//     (a new attack can drop a ringing note ~6 dB).
+//   - Emitting ONE oscillator per partial (Spike 2, peak-pick + phase handoff)
+//     held a ringing note to ~0.4 dB — but a sparse log bank keeps a WRONG
+//     subset of partials, punching holes in the harmonic series (bit-crush on
+//     real material). The ear rejected it.
+//   - The unifier would be identity phase-locking (Laroche-Dolson) applied
+//     continuously — but per-sample locking DETUNES the slaved members (their
+//     analysis-phase difference drifts), so they cancel. A frameless phase-lock
+//     that does not detune is the open problem. See §10.
+// The engine currently prioritises timbre (what the ear flagged). See process().
 //
 // CONSTANT-Q. Channels are log-spaced (CPO per octave) with bandwidth ∝ centre
 // frequency (Q = fk / BWk fixed). Two consequences, both wanted:
@@ -59,11 +65,11 @@
 //   - cos/atan2 per channel per sample: clarity over speed here. ~46 channels
 //     is fine offline; a real-time pass wants a recurrence for the resynth
 //     oscillator and a table/polynomial for arg. Not this commit.
-//   - Chord sub still sits ~3 dB above the vocoder's ideal floor: a WEAK partial
-//     next to a STRONG one in a sparse log bank is masked by the strong one's
-//     skirt, so its channel is an intermittent local max and it emits unevenly.
-//     Beating that needs real partial tracking (parabolic peak amplitude +
-//     birth/death matching) or higher resolution without the latency — Spike 3.
+//   - Polyphonic coherence is the OPEN axis: under overlap a chord/arpeggio
+//     wobbles (channels of one partial decorrelate). The engine holds timbre,
+//     not coherence — see the trade above and design §10. Not a tuning knob.
+//   - Mild treble tilt: overlap under-weights the high harmonics (~1.5-3× low).
+//     A fixed voicing EQ corrects it — follow-up, once a direction is chosen.
 //   - No transient split yet (design §7 keeps it as the next perceptual win).
 //
 // Same interface as StreamShifter / StreamVocoder (init / reset / set_ratio /
@@ -113,9 +119,7 @@ public:
             _z[i]     = {};
             _zprev[i] = {};
             _theta[i] = 0.0f;
-            _emitting[i] = false;
-            _emit[i]     = false;
-            _amp[i]      = 0.0f;
+            _amp[i]   = 0.0f;
         }
         _renorm = 0;
     }
@@ -130,115 +134,45 @@ public:
         const float x = ring[(uint32_t)(wpos - 1) & mask];
 
         const bool renorm = (++_renorm >= 256);
-        // Pass 1 — analysis. EVERY channel keeps tracking every sample (carrier,
-        // envelope, instantaneous frequency, resynth phase), so a channel that
-        // later becomes a partial's home has a coherent phase history and never
-        // starts cold. Only WHICH channels are emitted is decided in pass 2.
+        const float two_pi = 2.0f * static_cast<float>(M_PI);
+        // Pass 1 — analysis + per-channel resynth phase. Each channel runs its
+        // OWN oscillator at ratio× its own instantaneous frequency. This is
+        // OVERLAP reconstruction: every channel contributes, so the full harmonic
+        // series is rebuilt (peak-picking punched holes in it → bit-crush timbre,
+        // §10). The known cost is that channels sharing a partial can decorrelate
+        // under another note's leakage (arpeggio/chord wobble); a frameless
+        // phase-lock that would fix it without detuning the members is unsolved
+        // here and left to future work (§10 lucidity note).
         for (int k = 0; k < _nch; ++k) {
-            // Advance this channel's demodulation carrier e^-jωk n and shift the
-            // input down to baseband. The rotating multiply drifts in magnitude
-            // over thousands of samples; renormalise it a few hundred samples
-            // apart (cheap, and imperceptible between renorms).
             _car[k] *= _rot[k];
             if (renorm) _car[k] /= std::abs(_car[k]);
             const std::complex<float> demod = x * _car[k];
-
-            // Complex one-pole low-pass: zk is the channel's slowly-varying
-            // complex envelope (amplitude + phase relative to the carrier).
             _z[k] += _g[k] * (demod - _z[k]);
 
-            // Baseband phase advance since last sample = deviation of the
-            // partial from this channel's centre. arg(zk·conj(zk_prev)) wraps to
-            // (-π,π] on its own — no manual unwrap. Input inst freq = ωk + dφ.
-            const std::complex<float> prod = _z[k] * std::conj(_zprev[k]);
-            const float dphi = std::arg(prod);
+            const float dphi = std::arg(_z[k] * std::conj(_zprev[k]));
             _zprev[k] = _z[k];
-
-            // Resynthesise this channel at ratio× its instantaneous frequency.
-            // θk carries the whole history, so the channel keeps ringing through
-            // silences and is untouched by attacks in OTHER channels.
             _theta[k] += _ratio * (_omega[k] + dphi);
-            _theta[k] -= 2.0f * static_cast<float>(M_PI) *
-                         std::round(_theta[k] * static_cast<float>(0.5 * M_1_PI));
-
+            _theta[k] -= two_pi * std::round(_theta[k] * static_cast<float>(0.5 * M_1_PI));
             _a[k] = std::abs(_z[k]);
         }
         if (renorm) _renorm = 0;
 
-        // Pass 2 — emit ONE oscillator per detected partial. Emitting every
-        // overlapping channel was Spike 1's first failure: a partial is carried
-        // by ~CPO/2 channels at once, and leakage from OTHER notes pulls each
-        // channel's (nonlinear) frequency estimate differently, so those
-        // channels decorrelate and their sum cancels — a new attack then dropped
-        // a ringing note by 6 dB, the exact opposite of §1.1. Keeping only
-        // local-maximum channels collapses each partial onto its dominant
-        // channel, whose frequency estimate is barely perturbed by distant
-        // notes. That cut the damage ~5×, but left a residual FLICKER: a partial
-        // sitting between two channels makes the local max jump between them as
-        // |z| wobbles, and the two channels' θ free-ran from different histories,
-        // so each jump was a phase step (arpeggio 1.2 dB).
-        //
-        // Spike 2 kills that flicker with a PHASE HANDOFF: when the emitting
-        // channel for a partial changes, the new channel inherits the departing
-        // one's θ. Both channels track the same partial frequency, so once
-        // aligned they stay aligned and the crossover is seamless — arpeggio
-        // 1.2 → 0.4 dB. (A hysteresis margin was tried on top and dropped: it
-        // bought a little more but every safe formulation either deadlocked a
-        // straddling tone into silence or latched whole clusters on. The handoff
-        // alone is robust on every |z| pattern.)
-        // ADAPTIVE FLOOR. A fixed floor (1e-4) let noise-floor channels BETWEEN
-        // the real partials become intermittent local maxima. A channel with a
-        // tiny |z| has an essentially random baseband phase, so its dφ is random
-        // and its oscillator emits broadband noise in short bursts — inaudible
-        // on 3 clean sines (the audit signals), but on a real pluck's ~8
-        // harmonics × 4 notes the sparse bank is full of such junk maxima and
-        // the sum turns to grit ("8-bit at 11 kHz"). Gating emission at a
-        // FRACTION of the loudest channel this sample kills them while tracking
-        // decay (the floor follows the signal down). Absolute floor as backstop.
+        // Pass 2 — emit every channel above an ADAPTIVE FLOOR, amplitude-smoothed.
+        // The floor (a fraction of the loudest channel this sample) gates the
+        // noise-floor channels BETWEEN partials, whose random baseband phase made
+        // them spit broadband grit; it tracks the decay down, and the skirt
+        // channels of real partials sit above it so the harmonic series is kept.
+        // Amplitude smoothing fades a channel in/out instead of clicking.
         float amax = 0.0f;
         for (int k = 0; k < _nch; ++k) amax = std::max(amax, _a[k]);
         const float floor = std::max(PEAK_FLOOR, EMIT_REL * amax);
 
-        for (int k = 0; k < _nch; ++k) {
-            const float lo = (k > 0)        ? _a[k - 1] : 0.0f;
-            const float hi = (k < _nch - 1) ? _a[k + 1] : 0.0f;
-            // Strict on the left, ≥ on the right: breaks ties so a partial
-            // straddling two EQUAL channels yields exactly ONE winner, never a
-            // deadlock (a two-sided margin could be met by neither and silence a
-            // whole note; a retention BOOST vs raw neighbours let whole clusters
-            // latch on — both tried, both rejected). Mutual exclusion holds on
-            // every |z| pattern.
-            const float m = _a[k];
-            _emit[k] = (m > lo) && (m >= hi) && (m > floor);
-        }
-        for (int k = 0; k < _nch; ++k) {
-            if (_emit[k] && !_emitting[k]) {              // rising edge: hand off
-                int src = -1;
-                if (k > 0        && _emitting[k - 1]) src = k - 1;
-                if (k < _nch - 1 && _emitting[k + 1] &&
-                    (src < 0 || _a[k + 1] > _a[src]))  src = k + 1;
-                if (src >= 0) _theta[k] = _theta[src];   // inherit phase
-            }
-        }
-        // AMPLITUDE SMOOTHING. Each channel's emitted amplitude ramps toward its
-        // target (2|z| when emitting, 0 otherwise) over ~AMP_MS, so a channel
-        // switching on or off — a genuine handoff OR a residual junk blip that
-        // slips past the floor — fades instead of stepping. A hard step is a
-        // click, and clicks are broadband: the grit again. θ keeps advancing for
-        // every channel (pass 1), so a channel ramping back up is still phase-
-        // coherent. This is the crossfade the handoff's shared phase sets up.
         float out = 0.0f;
         for (int k = 0; k < _nch; ++k) {
-            const float target = _emit[k] ? 2.0f * _a[k] : 0.0f;
+            const float target = (_a[k] > floor) ? 2.0f * _a[k] : 0.0f;
             _amp[k] += _amp_c * (target - _amp[k]);
             out += _amp[k] * std::cos(_theta[k]);
-            _emitting[k] = _emit[k];
         }
-
-        // One emitter per partial, so no overlap sum to divide out. A single
-        // channel captures only part of a between-centres partial's energy, so
-        // the level runs a little low — fine for the spike's relative
-        // measurements; a per-channel gain trim is follow-up #1.
         return out;
     }
 
@@ -256,10 +190,8 @@ private:
     std::complex<float> _car[MAXCH]   = {};   // running demod carrier
     std::complex<float> _z[MAXCH]     = {};   // baseband envelope
     std::complex<float> _zprev[MAXCH] = {};   // previous envelope (for dφ)
-    float _theta[MAXCH] = {};                 // resynth phase accumulators
-    float _a[MAXCH]     = {};                 // per-sample channel magnitude
-    bool  _emitting[MAXCH] = {};              // was channel k an emitter last sample
-    bool  _emit[MAXCH]     = {};              // is channel k an emitter this sample
-    float _amp[MAXCH]      = {};              // smoothed emitted amplitude
-    float _amp_c           = 0.0f;            // amplitude ramp coefficient
+    float _theta[MAXCH] = {};                 // per-channel resynth phase accumulator
+    float _a[MAXCH]     = {};                 // per-sample channel magnitude |z|
+    float _amp[MAXCH]   = {};                 // smoothed emitted amplitude
+    float _amp_c        = 0.0f;               // amplitude ramp coefficient
 };

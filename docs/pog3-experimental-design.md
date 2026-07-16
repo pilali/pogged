@@ -374,22 +374,59 @@ locking* de Laroche-Dolson que fait déjà `stream_vocoder.hpp`, mais appliqué 
 restent alors cohérents (pas de décorrélation) **et** toutes les harmoniques
 sont reconstruites (pas de trous).
 
-### Spike 3 — plan
-- **Overlap + verrouillage de phase continu** (identity locking à la
-  Laroche-Dolson) : le cœur du correctif ci-dessus. Cible : timbre fidèle (toutes
-  harmoniques présentes) **et** arpège/accord stables.
-- **Test de fidélité de timbre** (`filterbank_test`) : les 8 harmoniques d'une
-  note doivent ressortir, décroissantes, sans trou — la métrique qui manquait.
-- **EQ de voicing fixe** pour compenser le tilt aigu résiduel de l'overlap.
-- **Test d'arpège dense** exposant enfin le défaut du vocodeur.
-- **Aplatissement du banc** (follow-up #1), puis câblage dans `Focus`
-  (TTL LV2 + JUCE + modgui) — seulement une fois le timbre jugé fidèle à
-  l'oreille.
+### Spike 3 — résultat : le verrouillage continu échoue, on choisit l'overlap
 
-> Note de lucidité : verrouiller la phase en continu, c'est réimplémenter le
-> cœur d'un phase vocoder **sans trame**. Légitime — c'est la façon d'avoir la
-> fidélité du vocodeur à la latence variable du banc — mais c'est du vrai
-> travail, pas un réglage. Si le Spike 3 n'atteint pas la fidélité à l'oreille,
-> la conclusion honnête sera peut-être que la transposition polyphonique fidèle
-> à basse latence est intrinsèquement le domaine du vocodeur (85 ms), et qu'il
-> vaut mieux attaquer SES faiblesses (latence, attaques) que réinventer.
+**Ce qui a été tenté.** Overlap + verrouillage d'identité continu :
+θ_k = θ_pic + (arg z_k − arg z_pic), le pic accumulant ratio×sa fréquence.
+
+**Pourquoi ça échoue.** Mesuré tout de suite sur la fidélité de timbre : h2
+s'effondre à 0,02 (au lieu de 0,5). La cause est subtile et instructive — c'est
+la différence entre un phase vocoder **à trames** et une version **continue**.
+Le baseband de chaque canal tourne à (f − f_k) : la différence de phase
+d'analyse (arg z_k − arg z_pic) **dérive** dans le temps au rythme (f_pic − f_k).
+En verrouillant sur la valeur instantanée, le membre oscille à
+ratio·f + (f_pic − f_k) au lieu de ratio·f : **il se désaccorde et s'annule**.
+Le vocodeur à trames y échappe parce qu'il re-photographie le lobe à chaque
+trame et n'intègre jamais la phase des membres. En continu, il faudrait figer
+l'offset (forme du lobe) sans le laisser dériver — **problème ouvert**.
+
+**Ce qu'on retient.** L'engine tourne désormais en **overlap simple** (chaque
+canal à sa propre fréquence, plancher adaptatif + lissage). Bilan honnête :
+
+| Approche | Timbre (harmoniques) | Cohérence poly (arpège) |
+|---|---|---|
+| peak-pick + handoff (Spike 2) | **trous** (impaires 30-70× bas) | **0,45 dB** ✓ |
+| verrouillage continu (Spike 3) | pire (h2 s'annule) | — |
+| **overlap simple (retenu)** | **fidèle** (toutes présentes) ✓ | 6 dB (régresse) |
+
+Aucun point ne gagne les deux axes. L'oreille ayant rejeté le bit-crush du
+peak-pick, on **priorise le timbre** : overlap. La fidélité de timbre devient un
+**gate** dans `filterbank_test` (les 8 harmoniques doivent survivre, sans trou) ;
+ripple accord et arpège passent en **report-only** (mesurés, documentés, non
+assertés) le temps que la tension soit ouverte.
+
+### Conclusion de lucidité (importante)
+
+Trois spikes ont établi un fait net : **la transposition polyphonique fidèle ET
+cohérente à basse latence est un vrai problème de recherche.** Le banc de
+filtres donne la **basse latence dépendante de la fréquence** (acquis) et, en
+overlap, un **timbre fidèle** (acquis) — mais la cohérence polyphonique demande
+un verrouillage de phase que, sans trame, on ne sait pas faire sans désaccord.
+La version à trames qui sait le faire, c'est le **phase vocoder** — et on l'a
+déjà (`stream_vocoder.hpp`), au prix de 85 ms.
+
+Deux voies devant nous, à trancher **avec l'utilisateur** :
+
+- **(A) Continuer le banc** : chercher le verrouillage continu sans désaccord
+  (offset de lobe figé + ré-appariement propre aux transitions), l'EQ de
+  voicing, le test d'arpège dense. Potentiel : fidélité du vocodeur à latence
+  variable. Coût : de la recherche, pas des réglages.
+- **(B) Rediriger l'effort vers le vocodeur** : il est déjà fidèle et cohérent ;
+  attaquer SES faiblesses — latence (bandes hybrides : grave long, aigu court,
+  cf. §3.2), lissage d'attaque (le split transitoire du §7, qui reste le plus
+  gros gain perceptif inexploité) — au lieu de réinventer son cœur en continu.
+
+Mon avis : (B) a le meilleur rapport résultat/risque à court terme, et le
+**split transitoire** (détection + réinjection des attaques, `OnsetDetector`
+déjà présent) est le gain le plus tangible vers « ça sonne comme un POG ». Le
+banc reste une piste de fond pour la latence variable.
