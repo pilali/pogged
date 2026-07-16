@@ -35,13 +35,14 @@
 //
 // All buffers are member variables — zero stack allocation in process().
 
-class StreamVocoder {
+// Templated on the FFT size so several window lengths can coexist in one
+// binary (the multi-resolution vocoder runs a long window for the bass and a
+// short one for the treble/attacks). The plain `StreamVocoder` alias at the end
+// keeps the historic single-window type — same behaviour as before.
+template <int N_>
+class StreamVocoderT {
 public:
-#ifdef POGGED_PV_N
-    static constexpr int N = POGGED_PV_N;
-#else
-    static constexpr int N = 4096;
-#endif
+    static constexpr int N = N_;
     static constexpr int HOP    = N / 4;        // 75 % overlap
     static constexpr int BINS   = N / 2 + 1;
     static constexpr int OUTBUF = N * 4;        // ring buffer ≥ 2 × max unread
@@ -291,3 +292,11 @@ private:
     int    _out_read  = 0;
     int    _out_fill  = 0;
 };
+
+// Historic single-window type, default 4096 (or -DPOGGED_PV_N). Everything that
+// used StreamVocoder before the templating keeps working unchanged.
+#ifdef POGGED_PV_N
+using StreamVocoder = StreamVocoderT<POGGED_PV_N>;
+#else
+using StreamVocoder = StreamVocoderT<4096>;
+#endif
