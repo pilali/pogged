@@ -28,9 +28,10 @@ const PORTS = {
   lp_cutoff: 20000, lp_q: 0.707, out_level: 1.0,
   pan_dry: 0.0, pan_sub1: 0.0, pan_sub2: 0.0,
   pan_up5: 0.0, pan_up1: 0.0, pan_up2: 0.0,
+  spread: 0.0,
 };
 
-const PANEL_W = 640, PANEL_H = 380;
+const PANEL_W = 760, PANEL_H = 380;
 
 function buildPage() {
   const dir = path.join(REPO, 'pogged.lv2', 'modgui');

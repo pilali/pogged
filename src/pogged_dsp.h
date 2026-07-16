@@ -34,6 +34,9 @@ typedef struct {
     float pan_up5;       /* idx 18 [-1 – 1]                            */
     float pan_up1;       /* idx 19 [-1 – 1]                            */
     float pan_up2;       /* idx 20 [-1 – 1]                            */
+    float spread;        /* idx 21 [0 – 1]   POG3 SPREAD: stereo delay on
+                                             +5th/+1/+2 only. R is 3x L
+                                             (L<=50ms, R<=150ms). 0 = off. */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

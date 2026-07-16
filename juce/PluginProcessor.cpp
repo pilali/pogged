@@ -46,6 +46,9 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     p.add(std::make_unique<AF>(pid("pan_up1"),  "Pan Octave Up",    panRange, 0.0f));
     p.add(std::make_unique<AF>(pid("pan_up2"),  "Pan 2 Octaves Up", panRange, 0.0f));
 
+    // POG3 SPREAD: stereo delay on the +5th/+1/+2 voices (R = 3x L).
+    p.add(std::make_unique<AF>(pid("spread"),   "Spread",           Range(0.0f, 1.0f), 0.0f));
+
     return p;
 }
 
@@ -74,6 +77,7 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pPanUp5  = raw("pan_up5");
     pPanUp1  = raw("pan_up1");
     pPanUp2  = raw("pan_up2");
+    pSpread  = raw("spread");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -123,7 +127,7 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pDetune->load(), pAttack->load(), pSens->load(),
         pCutoff->load(), pQ->load(), pOut->load(), pUp5->load(),
         pPanDry->load(), pPanSub1->load(), pPanSub2->load(),
-        pPanUp5->load(), pPanUp1->load(), pPanUp2->load()
+        pPanUp5->load(), pPanUp1->load(), pPanUp2->load(), pSpread->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.

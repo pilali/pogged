@@ -9,6 +9,7 @@
 // against.
 #include "pogged_dsp.h"
 #include "stream_shifter.hpp"
+#include "delay_line.hpp"
 #include "onset_detector.hpp"
 #include "biquad.hpp"
 #include "envelope.hpp"
@@ -97,6 +98,12 @@ static constexpr float FIFTH_RATIO = 1.4983070768766815f;
 static constexpr float DET_RATE_MIN = 0.25f;   // Hz, at the smallest detune
 static constexpr float DET_RATE_MAX = 3.0f;    // Hz, at detune = 25 cents
 
+// POG3 SPREAD: a short delay per channel on the +5th/+1/+2 voices, right 3x
+// longer than left, which throws them wide. Per the manual the two suboctave
+// voices are deliberately excluded — a delayed sub just smears the low end.
+static constexpr float SPREAD_L_MAX_MS = 50.0f;
+static constexpr float SPREAD_R_MAX_MS = 150.0f;   // = 3x left
+
 struct PoggedDsp {
     double sample_rate = 48000.0;
 
@@ -124,6 +131,11 @@ struct PoggedDsp {
     // crossfades the (phase-independent) detuned voice in instead of hard-
     // switching to the 50/50 average, which was an audible click.
     float g_detmix = 0.0f;
+    // SPREAD delay lines, one per spread-eligible voice (fed post-detune-mix,
+    // pre-pan). Indexed by Voice for clarity; only V_UP5/V_UP1/V_UP2 are used.
+    DelayLine     sdl[N_VOICES];
+    float         g_spread = 0.0f;    // smoothed 0..1
+
     // Smoothed pan positions (-1..+1), one per voice; gains are derived per
     // sample by pan_gains(). Smoothing the position rather than the two gains
     // keeps the pair consistent all the way through a sweep.
@@ -193,6 +205,12 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->vfilt[V_UP1D].setup(Biquad::HP, 140.0f, 0.707f, sr);
     p->vfilt[V_UP2D].setup(Biquad::HP, 220.0f, 0.707f, sr);
 
+    // Sized for the longest delay SPREAD can ask for.
+    const int spread_max = (int)(SPREAD_R_MAX_MS * 0.001f * sr) + 2;
+    p->sdl[V_UP5].init(spread_max);
+    p->sdl[V_UP1].init(spread_max);
+    p->sdl[V_UP2].init(spread_max);
+
     p->det.init(sr);
     pogged_dsp_reset(p);
     return p;
@@ -227,6 +245,10 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->det_phase     = 0.0f;
     p->p_dry = p->p_sub1 = p->p_sub2 = 0.0f;
     p->p_up5 = p->p_up1 = p->p_up2 = 0.0f;
+    p->g_spread = 0.0f;
+    p->sdl[V_UP5].reset();
+    p->sdl[V_UP1].reset();
+    p->sdl[V_UP2].reset();
 }
 
 // ── Processing ───────────────────────────────────────────────────────────────
@@ -256,6 +278,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float pup5_t  = std::clamp(p_->pan_up5,     -1.0f, 1.0f);
     const float pup1_t  = std::clamp(p_->pan_up1,     -1.0f, 1.0f);
     const float pup2_t  = std::clamp(p_->pan_up2,     -1.0f, 1.0f);
+    const float spread_t = std::clamp(p_->spread,      0.0f, 1.0f);
 
     const bool detune_on = det_ct > 0.5f;
     const bool env_on    = atk_ms > 1.0f;
@@ -293,6 +316,8 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         if (act[v] && !p->sh_live[v]) {                    // fresh grains
             p->sh[v].reset();
             p->vfilt[v].reset();
+            p->sdl[v].reset();   // else SPREAD replays audio from before the
+                                 // voice was silenced (no-op if uninitialised)
         }
         p->sh_live[v] = act[v];
     }
@@ -374,12 +399,26 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             pan_gains(p->p_sub2, gl, gr);
             wet_l += gl * v; wet_r += gr * v;
         }
+        // SPREAD: right channel delayed 3x longer than left, throwing the
+        // upper voices wide. Applied post-detune-mix, pre-pan, and only to
+        // +5th/+1/+2 — the manual excludes the suboctaves. At spread 0 the
+        // delay line returns the sample just written, so this is transparent.
+        p->g_spread += gc * (spread_t - p->g_spread);
+        const float dl_s = p->g_spread * SPREAD_L_MAX_MS * 0.001f * sr;
+        const float dr_s = p->g_spread * SPREAD_R_MAX_MS * 0.001f * sr;
+        auto spread_mix = [&](Voice v, float s, float pan) noexcept {
+            p->sdl[v].write(s);
+            float lg, rg;
+            pan_gains(pan, lg, rg);
+            wet_l += lg * p->sdl[v].read(dl_s);
+            wet_r += rg * p->sdl[v].read(dr_s);
+        };
+
         // +5th takes no detune: on both the POG2 and the POG3 the DETUNE
         // slider acts on the +1/+2 voices only.
         if (act[V_UP5]) {
             const float v = p->g_up5 * p->vfilt[V_UP5].process(p->sh[V_UP5].process(ring, mask, p->wpos));
-            pan_gains(p->p_up5, gl, gr);
-            wet_l += gl * v; wet_r += gr * v;
+            spread_mix(V_UP5, v, p->p_up5);
         }
         if (act[V_UP1]) {
             const float v = p->vfilt[V_UP1].process(p->sh[V_UP1].process(ring, mask, p->wpos));
@@ -389,8 +428,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
                 o = (1.0f - m) * v + m * vd;   // m ramps 0..0.5 (0.5 = 50/50)
             }
             o *= p->g_up1;
-            pan_gains(p->p_up1, gl, gr);
-            wet_l += gl * o; wet_r += gr * o;
+            spread_mix(V_UP1, o, p->p_up1);
         }
         if (act[V_UP2]) {
             const float v = p->vfilt[V_UP2].process(p->sh[V_UP2].process(ring, mask, p->wpos));
@@ -400,8 +438,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
                 o = (1.0f - m) * v + m * vd;
             }
             o *= p->g_up2;
-            pan_gains(p->p_up2, gl, gr);
-            wet_l += gl * o; wet_r += gr * o;
+            spread_mix(V_UP2, o, p->p_up2);
         }
 
         // Attack/swell. The detector always runs so its RMS state is warm

@@ -30,7 +30,8 @@ URI  = "https://github.com/pilali/pogged"
 # Pans are centred unless a preset says otherwise, so a preset only spells out
 # what it actually places in the stereo field.
 PAN_DEFAULTS = {s: 0.0 for s in
-                ("pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2")}
+                ("pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2",
+                 "spread")}
 
 
 def P(name, **vals):
@@ -95,6 +96,7 @@ ORDER = sorted([
     "up5_level", "detune_cents", "attack_ms", "attack_sens", "lp_cutoff",
     "lp_q", "out_level",
     "pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2",
+    "spread",
 ])
 
 

@@ -19,7 +19,7 @@
     font-family: "Nexa", "Questrial", sans-serif;
     height: 380px;
     position: absolute;
-    width: 640px;
+    width: 760px;
     overflow: hidden;
 }
 
@@ -70,7 +70,7 @@
     align-items: flex-end;
     bottom: 26px;
     display: flex;
-    gap: 10px;
+    gap: 12px;
     justify-content: center;
     left: 24px;
     position: absolute;

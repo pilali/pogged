@@ -41,7 +41,8 @@ enum Port : uint32_t {
     P_PAN_UP5      = 18,
     P_PAN_UP1      = 19,
     P_PAN_UP2      = 20,
-    P_COUNT        = 21
+    P_SPREAD       = 21,   // POG3 stereo delay  [0 – 1]
+    P_COUNT        = 22
 };
 
 // Control ports are 2..13 and 15..20; index 14 is audio, so the ctl[] slot at
@@ -118,6 +119,7 @@ static void run(LV2_Handle handle, uint32_t n_samples)
         ctl(p, P_PAN_UP5),
         ctl(p, P_PAN_UP1),
         ctl(p, P_PAN_UP2),
+        ctl(p, P_SPREAD),
     };
 
     pogged_dsp_process(p->dsp, &params, p->audio_in,

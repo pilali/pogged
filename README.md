@@ -4,7 +4,8 @@ Pogged is a **polyphonic octave generator** for guitar (and other mono
 sources), inspired by the Electro-Harmonix POG2: sub octave (−1), sub −2
 octaves, octave up (+1), two octaves up (+2), a chorus detune on the up
 voices, a pick-triggered attack/swell, and a resonant low-pass filter. It also
-takes from the newer POG3 the **fifth-up voice** and **per-voice panning**.
+takes from the newer POG3 the **fifth-up voice**, **per-voice panning** and
+**Spread**.
 
 **Mono in → stereo out.** Each of the six voices has its own pan.
 
@@ -36,6 +37,7 @@ components).
 | Resonance | Q 0.5–8 | Filter resonance. |
 | Output | 0–200 % | Master output gain into a soft clipper. |
 | Pan (×6) | L–C–R | Per-voice placement in the stereo field (dry, −1, −2, +5th, +1, +2). Centre is full level on **both** outputs, so a single output still carries everything. |
+| Spread | 0–100 % | POG3 stereo delay on the +5th/+1/+2 voices — right channel 3× longer than left (≤150 ms / ≤50 ms). The sub octaves are excluded, as on the hardware. 0 = off (bit-transparent). |
 
 ## Presets
 
