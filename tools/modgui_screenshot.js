@@ -35,7 +35,7 @@ const PORTS = {
   warp: 0.0, warp_heel: 0.0, warp_toe: 12.0,
 };
 
-const PANEL_W = 880, PANEL_H = 560;
+const PANEL_W = 640, PANEL_H = 500;
 
 function buildPage() {
   const dir = path.join(REPO, 'pogged.lv2', 'modgui');

@@ -1,15 +1,24 @@
 /* ============================================================
-   POGGED modgui — generic vertical-fader binder
+   POGGED modgui — generic control binder
    --------------------------------------------------------------
-   Every continuous control is a .pogged-fader with:
-     data-handle  = lv2:symbol
-     data-min / data-max
-     data-scale   = "log" (optional) for frequency / time
-   The cap + fill positions are driven by the CSS var --value.
-   Enums and toggles are .pogged-seg with the same data-handle and
-   one .pogged-seg-btn[data-value] per value.
-   data ranges are hardcoded in the template because MOD-UI's
-   'start' event ships ports as { symbol, value } only.
+   Four kinds of control, all keyed by data-handle == lv2:symbol:
+
+     .pogged-fader  vertical fader   --value  0..1
+     .pogged-knob   rotary pot       --knob   0..1
+     .pogged-seg    enum switch      one .pogged-seg-btn[data-value] per value
+     .pogged-lamp   0/1 toggle       lights when engaged
+
+   Faders and knobs share data-min / data-max / data-scale="log" and go through
+   the SAME toPct/toValue: a knob is only a fader with a different shape. That
+   is the point of the class-based dispatch — knobs used to be recognised by
+   their symbol's "pan_" prefix, with their own hand-rolled linear mapping, so
+   nothing but a pan could ever be a knob.
+
+   data-detent="<v>" snaps near a value: the pans and the filter ENV are
+   bipolar and want a centre detent, the log pots do not.
+
+   Ranges are hardcoded in the template because MOD-UI's 'start' event ships
+   ports as { symbol, value } only.
    ============================================================ */
 
 function (event, funcs) {
@@ -35,10 +44,20 @@ function (event, funcs) {
         return min + pct * (max - min)
     }
 
-    function isPan(sym) { return sym.indexOf('pan_') === 0 }
+    /* min / max / scale / detent off any control element. */
+    function spec(el) {
+        var d = el.attr('data-detent')
+        return {
+            sym:    el.attr('data-handle'),
+            min:    parseFloat(el.attr('data-min')),
+            max:    parseFloat(el.attr('data-max')),
+            scale:  el.attr('data-scale'),
+            detent: d === undefined ? null : parseFloat(d)
+        }
+    }
 
     function formatValue(sym, v) {
-        if (isPan(sym)) {
+        if (sym.indexOf('pan_') === 0) {
             if (Math.abs(v) < 0.005) return 'C'
             return (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100)
         }
@@ -55,8 +74,8 @@ function (event, funcs) {
             return 'Q ' + v.toFixed(2)
         case 'warp_heel':
         case 'warp_toe':
-            /* Semitones, signed: the sweep direction is heel -> toe, so the
-               sign has to be visible or the two ends look interchangeable. */
+            /* Semitones, signed: the sweep runs heel -> toe, so the sign has to
+               be visible or the two ends look interchangeable. */
             return (v >= 0 ? '+' : '') + v.toFixed(1) + ' st'
         case 'filter_env':
             /* Signed depth: centre is off, and which way it sweeps matters. */
@@ -64,24 +83,25 @@ function (event, funcs) {
             return (v > 0 ? '+' : '') + (v * 100).toFixed(0) + ' %'
         case 'input_gain':
             return v.toFixed(2) + ' x'
-        case 'attack_sens':
-        case 'filter_sens':
-        case 'spread':
-        case 'warp':
-            return (v * 100).toFixed(0) + ' %'
         default:
             return (v * 100).toFixed(0) + ' %'   /* levels: 0..2 -> 0..200 % */
         }
     }
 
+    function readout(sym, v) {
+        icon.find('[data-handle-value="' + sym + '"]').text(formatValue(sym, v))
+    }
+
     function setVisual(sym, value) {
+        var sel = '[data-handle="' + sym + '"]'
+
+        var lamp = icon.find('.pogged-lamp' + sel)
+        if (lamp.length) { lamp.toggleClass('is-on', value > 0.5); return }
+
         /* Segmented switch: light the button whose value is nearest. The port
            is a float even for an enum, so compare with a tolerance rather than
            ===, or a host sending 1.0000001 would light nothing at all. */
-        var lamp = icon.find('.pogged-lamp[data-handle="' + sym + '"]')
-        if (lamp.length) { lamp.toggleClass('is-on', value > 0.5); return }
-
-        var seg = icon.find('.pogged-seg[data-handle="' + sym + '"]')
+        var seg = icon.find('.pogged-seg' + sel)
         if (seg.length) {
             seg.find('.pogged-seg-btn').each(function () {
                 var bv = parseFloat($(this).attr('data-value'))
@@ -89,22 +109,21 @@ function (event, funcs) {
             })
             return
         }
-        if (isPan(sym)) {
-            var pot = icon.find('.pogged-pan[data-handle="' + sym + '"]')
-            if (!pot.length) return
-            var pmin = parseFloat(pot.attr('data-min'))
-            var pmax = parseFloat(pot.attr('data-max'))
-            pot[0].style.setProperty('--pan',
-                String(clamp01((value - pmin) / (pmax - pmin))))
+
+        var knob = icon.find('.pogged-knob' + sel)
+        if (knob.length) {
+            var k = spec(knob)
+            knob[0].style.setProperty('--knob',
+                String(toPct(k.scale, k.min, k.max, value)))
+            readout(sym, value)
             return
         }
-        var el = icon.find('.pogged-fader[data-handle="' + sym + '"]')
+
+        var el = icon.find('.pogged-fader' + sel)
         if (!el.length) return
-        var min   = parseFloat(el.attr('data-min'))
-        var max   = parseFloat(el.attr('data-max'))
-        var scale = el.attr('data-scale')
-        el[0].style.setProperty('--value', String(toPct(scale, min, max, value)))
-        icon.find('[data-handle-value="' + sym + '"]').text(formatValue(sym, value))
+        var f = spec(el)
+        el[0].style.setProperty('--value', String(toPct(f.scale, f.min, f.max, value)))
+        readout(sym, value)
     }
 
     if (event.type === 'start') {
@@ -125,34 +144,36 @@ function (event, funcs) {
             if (tooltip) tooltip.style.display = 'none'
         }
 
-        /* Pan pots sit INSIDE their fader column, so this must be registered
-           first and stop propagation, and the fader handler below must ignore
-           events originating in a pot — otherwise dragging a pan would also
-           drive the fader underneath it. Relative drag (the pot is only 22px);
-           150px of travel covers the full L..R sweep. */
-        icon.on('mousedown.pogged', '.pogged-pan', function (e) {
+        /* Knobs sit INSIDE a fader's column, so this must be registered first
+           and stop propagation, and the fader handler below must ignore events
+           originating in one — otherwise dragging a knob would also drive the
+           fader underneath it. Relative drag (a knob is only 22px); 150px of
+           travel covers the full sweep. */
+        icon.on('mousedown.pogged', '.pogged-knob', function (e) {
             if (e.which && e.which !== 1) return
             e.preventDefault()
             e.stopPropagation()
 
-            var pot = $(this)
-            var sym = pot.attr('data-handle')
-            var min = parseFloat(pot.attr('data-min'))
-            var max = parseFloat(pot.attr('data-max'))
-            if (!sym || !isFinite(min) || !isFinite(max)) return
+            var knob = $(this)
+            var k = spec(knob)
+            if (!k.sym || !isFinite(k.min) || !isFinite(k.max)) return
 
-            var startY = e.pageY
-            var startV = min + (max - min) *
-                parseFloat(pot[0].style.getPropertyValue('--pan') || '0.5')
+            var startY   = e.pageY
+            var startPct = parseFloat(knob[0].style.getPropertyValue('--knob') || '0.5')
 
             function move(ev) {
-                var d   = (startY - ev.pageY) / 150
-                var raw = Math.max(min, Math.min(max, startV + d * (max - min)))
-                if (Math.abs(raw) < 0.03) raw = 0        /* centre detent */
-                pot[0].style.setProperty('--pan',
-                    String(clamp01((raw - min) / (max - min))))
-                funcs.set_port_value(sym, raw)
-                showTooltip(ev, formatValue(sym, raw))
+                var pct = clamp01(startPct + (startY - ev.pageY) / 150)
+                var raw = toValue(k.scale, k.min, k.max, pct)
+                if (k.detent !== null &&
+                    Math.abs(raw - k.detent) < 0.03 * (k.max - k.min)) {
+                    raw = k.detent
+                    pct = toPct(k.scale, k.min, k.max, raw)
+                }
+                knob[0].style.setProperty('--knob', String(pct))
+                funcs.set_port_value(k.sym, raw)
+                /* 'from-js' isn't echoed back as 'change': refresh readout here */
+                readout(k.sym, raw)
+                showTooltip(ev, formatValue(k.sym, raw))
             }
             function up() {
                 hideTooltip()
@@ -170,7 +191,7 @@ function (event, funcs) {
             if (!sym) return
             var v = btn.hasClass('is-on') ? 0 : 1
             funcs.set_port_value(sym, v)
-            setVisual(sym, v)   /* 'from-js' is not echoed back as 'change' */
+            setVisual(sym, v)
         })
 
         icon.on('click.pogged', '.pogged-seg-btn', function (e) {
@@ -181,34 +202,32 @@ function (event, funcs) {
             var v   = parseFloat(btn.attr('data-value'))
             if (!sym || !isFinite(v)) return
             funcs.set_port_value(sym, v)
-            setVisual(sym, v)   /* 'from-js' is not echoed back as 'change' */
+            setVisual(sym, v)
         })
 
         icon.on('mousedown.pogged', '.pogged-fader', function (e) {
             if (e.which && e.which !== 1) return
-            if ($(e.target).closest('.pogged-pan').length) return   /* pot drag */
-            if ($(e.target).closest('.pogged-lamp').length) return  /* DRY lamp */
+            /* mousedown fires before click, so a knob or lamp press would
+               otherwise jump the fader it sits on. */
+            if ($(e.target).closest('.pogged-knob').length) return
+            if ($(e.target).closest('.pogged-lamp').length) return
             e.preventDefault()
             e.stopPropagation()
 
-            var el    = $(this)
-            var sym   = el.attr('data-handle')
-            var min   = parseFloat(el.attr('data-min'))
-            var max   = parseFloat(el.attr('data-max'))
-            var scale = el.attr('data-scale')
+            var el = $(this)
+            var f  = spec(el)
             var track = el.find('.pogged-fader-track')
-            if (!sym || !isFinite(min) || !isFinite(max)) return
+            if (!f.sym || !isFinite(f.min) || !isFinite(f.max)) return
 
             function move(ev) {
                 var rect = track[0].getBoundingClientRect()
                 if (rect.height <= 0) return
                 var pct = 1 - clamp01((ev.pageY - rect.top) / rect.height)
                 el[0].style.setProperty('--value', String(pct))
-                var raw = toValue(scale, min, max, pct)
-                funcs.set_port_value(sym, raw)
-                /* 'from-js' isn't echoed back as 'change': refresh readout here */
-                icon.find('[data-handle-value="' + sym + '"]').text(formatValue(sym, raw))
-                showTooltip(ev, formatValue(sym, raw))
+                var raw = toValue(f.scale, f.min, f.max, pct)
+                funcs.set_port_value(f.sym, raw)
+                readout(f.sym, raw)
+                showTooltip(ev, formatValue(f.sym, raw))
             }
             function up() {
                 hideTooltip()

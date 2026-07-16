@@ -3,16 +3,23 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 
-// Native reproduction of the MOD modgui (icon-pogged.html + stylesheet):
-// a cream EHX-style panel, two rows of vertical faders — voices with their pan
-// pots plus a switch grid, then character | warp | filter | level. Everything
-// is drawn with paths/gradients — no bitmaps — so it stays crisp at any zoom.
+// Native reproduction of the MOD modgui (icon-pogged.html + stylesheet), laid
+// out after the real POG3: one board — level | voices | attack/filter/detune —
+// where the secondary parameters are small knobs ABOVE the fader they modify
+// (Q + ENV over FILTER, SPREAD over DETUNE, MASTER over INPUT GAIN), which
+// groups them instead of lining up fifteen identical faders. Below it, a SETUP
+// strip for what the pedal keeps in its OLED menu. Everything is drawn with
+// paths/gradients — no bitmaps — so it stays crisp at any zoom.
 //
-// The layout, grouping, captions and value formatting are deliberately kept
-// one-for-one with the modgui: same panel size, same column order, same words.
-// A player moving between the MOD and a DAW should see one instrument, and any
-// control that exists in one front-end must exist in the other — every LV2
-// control port is reachable from both.
+// The layout, grouping, captions and value formatting are kept one-for-one with
+// the modgui: same panel size, column order, groups and words. A player moving
+// between the MOD and a DAW should see one instrument.
+//
+// NOT on the panel: `warp` and `freeze`. Both are EXP-jack modes on the pedal —
+// the pedal's POSITION, not a setting — so they live in the host's addressing
+// (automation, MIDI learn), where every parameter is reachable whether or not
+// the editor draws it. Everything else is here; that is checked by diffing the
+// TTL's symbols against this file.
 
 namespace pogged {
     const juce::Colour kPanelTop  { 0xfff3ead8 };
@@ -27,12 +34,13 @@ namespace pogged {
     const juce::Colour kBtnBot    { 0xffd8cbb0 };
 
     // Geometry shared with the stylesheet, so the two panels stay the same size.
-    constexpr int kPanelW   = 880;
-    constexpr int kPanelH   = 560;
+    constexpr int kPanelW   = 640;
+    constexpr int kPanelH   = 500;
     constexpr int kColW     = 36;   // one fader column
+    constexpr int kColWide  = 52;   // ... carrying two knobs (the FILTER block)
     constexpr int kColGap   = 12;
-    constexpr int kPanSize  = 22;
-    constexpr int kMargin   = 24;
+    constexpr int kKnob     = 22;
+    constexpr int kMargin   = 20;
 
     juce::Font font (float height, bool bold = false);
 
@@ -40,7 +48,7 @@ namespace pogged {
     juce::String formatValue (const juce::String& paramID, double v);
 }
 
-// ── Vertical fader look (dark slot, red fill, cream cap) ─────────────────────
+// ── Look and feel: vertical fader + rotary knob ──────────────────────────────
 class PoggedLNF : public juce::LookAndFeel_V4
 {
 public:
@@ -52,46 +60,61 @@ public:
                           juce::Slider&) override;
 };
 
-// ── A small pan pot, riding above a voice fader (modgui .pogged-pan) ─────────
-class PanKnob : public juce::Component
+// ── A small pot riding above the fader it modifies (modgui .pogged-knob) ─────
+// caption is drawn above it; `bipolar` paints the centre mark the pedal prints
+// over a pot whose middle means something (the pans, and the filter ENV whose
+// centre is off). Double-click returns to the parameter's default, which the
+// attachment wires by itself.
+class KnobControl : public juce::Component
 {
 public:
-    PanKnob(juce::AudioProcessorValueTreeState&, const juce::String& paramID,
-            juce::LookAndFeel*);
-    ~PanKnob() override;
+    KnobControl(juce::AudioProcessorValueTreeState&, const juce::String& paramID,
+                const juce::String& caption, juce::LookAndFeel*,
+                bool bipolar = false);
+    ~KnobControl() override;
     void resized() override;
+    void paint(juce::Graphics&) override;
 private:
     juce::Slider slider;
+    juce::String caption;
+    bool bipolar;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PanKnob)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(KnobControl)
 };
 
 // ── A vertical fader column (modgui .pogged-fader) ───────────────────────────
-// Optional, and each empty slot is still RESERVED so every track in a row
-// starts and ends on the same line (the modgui does this with
-// .pogged-pan-spacer / .pogged-lamp-spacer, for the same reason):
-//   panID  — a pan pot above, with the pedal's L..R marks
-//   keycap — the voice's name in a dark key, as the pedal prints it; a column
-//            with one carries no bottom caption, since it is already named
-//   dryID  — a DRY routing lamp at the foot. The pedal puts each DRY button at
+// Every slot below is RESERVED whether filled or not — knobs, L..R marks,
+// keycap, caption, lamp. A column that skips one has a longer track and a
+// readout on a different line from its neighbours': that has slipped past the
+// eye three times, so tools/modgui_measure.js now checks it on the modgui side
+// and this class keeps the two panels in step.
+//   knobs  — 0..2 pots above (the pedal's FILTER block carries Q + ENV)
+//   showLR — the pan pot's L..R marks, as printed on the pedal
+//   keycap — the voice's name in a dark key; a column with one carries no
+//            bottom caption, since the pedal names each voice once
+//   dryID  — a DRY routing lamp at the foot: the pedal puts each DRY button at
 //            the bottom of the column of the effect it routes, not in a block
-//            of its own, so the button sits next to the thing it acts on.
+//            of its own, so the button sits next to the thing it acts on
 class FaderControl : public juce::Component
 {
 public:
+    struct KnobSpec {
+        juce::String paramID, caption;
+        bool bipolar = false;      // paints the centre mark
+    };
+
     FaderControl(juce::AudioProcessorValueTreeState&, const juce::String& paramID,
                  const juce::String& caption, juce::LookAndFeel*,
-                 const juce::String& panID = {}, const juce::String& keycap = {},
-                 const juce::String& dryID = {});
+                 juce::Array<KnobSpec> knobs = {}, bool showLR = false,
+                 const juce::String& keycap = {}, const juce::String& dryID = {});
     ~FaderControl() override;
     void resized() override;
     void paint(juce::Graphics&) override;
 private:
     juce::Slider slider;
-    juce::String paramID;
-    juce::String caption;
-    juce::String keycap;
-    std::unique_ptr<PanKnob> pan;
+    juce::String paramID, caption, keycap;
+    bool showLR;
+    juce::OwnedArray<KnobControl> knobs;
     std::unique_ptr<juce::TextButton> lamp;
     std::unique_ptr<juce::ParameterAttachment> lampAtt;
     bool lampOn = false;
@@ -120,7 +143,24 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SegControl)
 };
 
-// ── The editor: logo + preset row + two fader rows + switch grid ─────────────
+// ── The FOCUS lamp (modgui .pogged-bracket-focus) ────────────────────────────
+// A lamp, not a segmented pair: on the pedal FOCUS is a round button hung under
+// the voices it switches. The pedal's bracket spans only +1/+2 because its POG
+// algorithm can bend nothing else; ours switches EVERY voice, so it spans them
+// all — bracketing +1/+2 here would lie. Lit = phase vocoder.
+class FocusLamp : public juce::Component
+{
+public:
+    FocusLamp(juce::AudioProcessorValueTreeState&, const juce::String& paramID);
+    void resized() override;
+private:
+    std::unique_ptr<juce::TextButton> button;
+    std::unique_ptr<juce::ParameterAttachment> attachment;
+    bool on = false;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FocusLamp)
+};
+
+// ── The editor ───────────────────────────────────────────────────────────────
 class PoggedEditor : public juce::AudioProcessorEditor
 {
 public:
@@ -131,10 +171,12 @@ public:
 private:
     PoggedAudioProcessor& proc;
     PoggedLNF lnf;
-    juce::OwnedArray<FaderControl> voices;   // row 1
-    juce::OwnedArray<FaderControl> tone;     // row 2
-    juce::OwnedArray<SegControl>   segs;
+    juce::OwnedArray<FaderControl> cols;      // level | voices | effects
+    juce::OwnedArray<SegControl>   segs;      // SETUP: range, filter mode
+    juce::OwnedArray<KnobControl>  setup;     // SETUP: env atk/dec/trig, heel/toe
+    std::unique_ptr<FocusLamp>     focus;
     juce::ComboBox presetBox;
     juce::Label brand, subtitle;
+    juce::Rectangle<int> focusBracket, dryBracket;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedEditor)
 };

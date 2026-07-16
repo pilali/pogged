@@ -9,215 +9,112 @@
     </div>
     <div class="pogged-subtitle">polyphonic octave generator</div>
 
-    <!-- ── Fader board ─────────────────────────────────────────────
-         Each fader binds by data-handle == lv2:symbol; segmented
-         switches bind the same way, one button per enum value. The
-         cap/fill position is driven by the CSS var - -value (0..1),
-         set from JS. data-scale="log" gives frequency/time controls a
-         logarithmic drag response.
+    <!-- ── Board ───────────────────────────────────────────────────
+         Laid out after the real POG3: the secondary parameters are small
+         knobs ABOVE the fader they modify (Q + ENV over FILTER, SPREAD over
+         DETUNE, MASTER over INPUT GAIN), which GROUPS them instead of lining
+         up fifteen identical faders. Each DRY lamp sits at the foot of the
+         column of the effect it routes, under one "DRY" bracket — the button
+         next to the thing it acts on.
 
-         Layout mirrors the JUCE editor one-for-one — same groups, same
-         order, same labels — so the two front-ends stay legible as the
-         same instrument. -->
+         Every control binds by data-handle == lv2:symbol. The JUCE editor
+         mirrors this layout one-for-one: same groups, order and labels.
 
-    <!-- Voices: each column is a level fader with its pan pot above. -->
-    <div class="pogged-faders pogged-row-voices">
+         NOT on the panel: `warp` and `freeze`. Both are EXP-jack modes on the
+         pedal — the pedal's POSITION, not a setting — so they live in the
+         host's addressing (MOD-UI's settings panel, a DAW's automation or
+         MIDI learn) where every port is reachable anyway. -->
+    <div class="pogged-board">
+        <div class="pogged-fader" data-handle="input_gain" data-min="0.5" data-max="3" title="Input gain: the level seen at the input">
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="out_level" data-min="0" data-max="2" title="Master output level"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">MASTER</span></div></div>
+            <div class="pogged-lr-spacer"></div><div class="pogged-key-spacer"></div><div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="input_gain"></span>
+            <span class="pogged-fader-label">IN</span><div class="pogged-lamp-spacer"></div>
+        </div>
+        <div class="pogged-group-gap"></div>
         <div class="pogged-fader" data-handle="dry_level" data-min="0" data-max="2" title="Dry">
-            <div class="pogged-pan" data-handle="pan_dry" data-min="-1" data-max="1" title="Pan Dry"><div class="pogged-pan-dial"></div></div>
-            <div class="pogged-lr"><span>L</span><span>R</span></div>
-            <div class="pogged-key">DRY</div>
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="pan_dry" data-min="-1" data-max="1" data-detent="0" title="Pan Dry"><div class="pogged-knob-dial"></div><span class="pogged-knob-label"></span></div></div><div class="pogged-lr"><span>L</span><span>R</span></div><div class="pogged-key">DRY</div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="dry_level"></span>
+            <span class="pogged-label-spacer"></span><div class="pogged-lamp-spacer"></div>
         </div>
         <div class="pogged-fader" data-handle="sub2_level" data-min="0" data-max="2" title="Sub -2 Octaves">
-            <div class="pogged-pan" data-handle="pan_sub2" data-min="-1" data-max="1" title="Pan Sub -2 Octaves"><div class="pogged-pan-dial"></div></div>
-            <div class="pogged-lr"><span>L</span><span>R</span></div>
-            <div class="pogged-key">-2</div>
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="pan_sub2" data-min="-1" data-max="1" data-detent="0" title="Pan Sub -2 Octaves"><div class="pogged-knob-dial"></div><span class="pogged-knob-label"></span></div></div><div class="pogged-lr"><span>L</span><span>R</span></div><div class="pogged-key">-2</div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="sub2_level"></span>
+            <span class="pogged-label-spacer"></span><div class="pogged-lamp-spacer"></div>
         </div>
         <div class="pogged-fader" data-handle="sub1_level" data-min="0" data-max="2" title="Sub Octave">
-            <div class="pogged-pan" data-handle="pan_sub1" data-min="-1" data-max="1" title="Pan Sub Octave"><div class="pogged-pan-dial"></div></div>
-            <div class="pogged-lr"><span>L</span><span>R</span></div>
-            <div class="pogged-key">-1</div>
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="pan_sub1" data-min="-1" data-max="1" data-detent="0" title="Pan Sub Octave"><div class="pogged-knob-dial"></div><span class="pogged-knob-label"></span></div></div><div class="pogged-lr"><span>L</span><span>R</span></div><div class="pogged-key">-1</div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="sub1_level"></span>
+            <span class="pogged-label-spacer"></span><div class="pogged-lamp-spacer"></div>
         </div>
-        <div class="pogged-fader" data-handle="up5_level" data-min="0" data-max="2" title="5th Up (POG3 voice)">
-            <div class="pogged-pan" data-handle="pan_up5" data-min="-1" data-max="1" title="Pan 5th Up (POG3 voice)"><div class="pogged-pan-dial"></div></div>
-            <div class="pogged-lr"><span>L</span><span>R</span></div>
-            <div class="pogged-key">+5th</div>
+        <div class="pogged-fader" data-handle="up5_level" data-min="0" data-max="2" title="5th Up">
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="pan_up5" data-min="-1" data-max="1" data-detent="0" title="Pan 5th Up"><div class="pogged-knob-dial"></div><span class="pogged-knob-label"></span></div></div><div class="pogged-lr"><span>L</span><span>R</span></div><div class="pogged-key">+5th</div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="up5_level"></span>
+            <span class="pogged-label-spacer"></span><div class="pogged-lamp-spacer"></div>
         </div>
         <div class="pogged-fader" data-handle="up1_level" data-min="0" data-max="2" title="Octave Up">
-            <div class="pogged-pan" data-handle="pan_up1" data-min="-1" data-max="1" title="Pan Octave Up"><div class="pogged-pan-dial"></div></div>
-            <div class="pogged-lr"><span>L</span><span>R</span></div>
-            <div class="pogged-key">+1</div>
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="pan_up1" data-min="-1" data-max="1" data-detent="0" title="Pan Octave Up"><div class="pogged-knob-dial"></div><span class="pogged-knob-label"></span></div></div><div class="pogged-lr"><span>L</span><span>R</span></div><div class="pogged-key">+1</div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="up1_level"></span>
+            <span class="pogged-label-spacer"></span><div class="pogged-lamp-spacer"></div>
         </div>
         <div class="pogged-fader" data-handle="up2_level" data-min="0" data-max="2" title="Two Octaves Up">
-            <div class="pogged-pan" data-handle="pan_up2" data-min="-1" data-max="1" title="Pan Two Octaves Up"><div class="pogged-pan-dial"></div></div>
-            <div class="pogged-lr"><span>L</span><span>R</span></div>
-            <div class="pogged-key">+2</div>
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="pan_up2" data-min="-1" data-max="1" data-detent="0" title="Pan Two Octaves Up"><div class="pogged-knob-dial"></div><span class="pogged-knob-label"></span></div></div><div class="pogged-lr"><span>L</span><span>R</span></div><div class="pogged-key">+2</div>
             <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
             <span class="pogged-fader-value" data-handle-value="up2_level"></span>
+            <span class="pogged-label-spacer"></span><div class="pogged-lamp-spacer"></div>
+        </div>
+        <div class="pogged-group-gap"></div>
+        <div class="pogged-fader" data-handle="attack_ms" data-min="0" data-max="2000" data-scale="log" title="Attack swell">
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="attack_sens" data-min="0" data-max="1" title="Attack sensitivity"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">SENS</span></div></div>
+            <div class="pogged-lr-spacer"></div><div class="pogged-key-spacer"></div><div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="attack_ms"></span>
+            <span class="pogged-fader-label">ATTACK</span><button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_attack" title="Send the dry through the attack swell">DRY</button>
+        </div>
+        <div class="pogged-fader pogged-fader-wide" data-handle="lp_cutoff" data-min="20" data-max="20000" data-scale="log" title="Filter frequency">
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="lp_q" data-min="0.5" data-max="8" data-scale="log" title="Filter resonance"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">Q</span></div><div class="pogged-knob" data-handle="filter_env" data-min="-1" data-max="1" data-detent="0" title="Filter envelope depth (centre = off)"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">ENV</span></div></div>
+            <div class="pogged-lr-spacer"></div><div class="pogged-key-spacer"></div><div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="lp_cutoff"></span>
+            <span class="pogged-fader-label">FILTER</span><button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_filter" title="Send the dry through the filter">DRY</button>
+        </div>
+        <div class="pogged-fader" data-handle="detune_cents" data-min="0" data-max="25" title="Detune (chorus on the up voices)">
+            <div class="pogged-knobs"><div class="pogged-knob" data-handle="spread" data-min="0" data-max="1" title="Spread: stereo delay on +5th/+1/+2"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">SPREAD</span></div></div>
+            <div class="pogged-lr-spacer"></div><div class="pogged-key-spacer"></div><div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="detune_cents"></span>
+            <span class="pogged-fader-label">DETUNE</span><button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_detune" title="Send the dry through the detune chorus and Spread. Costs the dry its zero latency.">DRY</button>
         </div>
 
-        <div class="pogged-switches">
-            <div class="pogged-seg" data-handle="focus" title="Engine: granular (~3 ms, the POG sound) or phase vocoder (~85 ms, clean on chords)">
-                <span class="pogged-seg-label">FOCUS</span>
-                <div class="pogged-seg-btns"><button type="button" class="pogged-seg-btn" data-value="0">GRAN</button><button type="button" class="pogged-seg-btn" data-value="1">VOC</button></div>
-            </div>
+        <!-- FOCUS: a lamp under the voices it switches, as the pedal does.
+             The pedal's bracket spans only +1/+2 because its POG algorithm can
+             bend nothing else; ours switches EVERY voice, so it spans them all
+             — bracketing +1/+2 here would lie. -->
+        <div class="pogged-bracket pogged-bracket-focus">
+            <button type="button" class="pogged-lamp" data-handle="focus"
+                    title="Engine: off = granular (~3 ms, the POG sound), on = phase vocoder (~85 ms, clean on chords)">FOCUS</button>
+        </div>
+        <div class="pogged-bracket pogged-bracket-dry"><span>DRY</span></div>
+    </div>
+
+    <!-- ── Setup ───────────────────────────────────────────────────
+         What the POG3 keeps in its OLED menu. We have no OLED, and burying
+         these in the host's generic panel would be hostile — so they get a
+         strip of their own, below the performance controls, which keeps the
+         pedal's own hierarchy. -->
+    <div class="pogged-setup">
+        <span class="pogged-setup-title">Setup</span>
             <div class="pogged-seg" data-handle="range_mode" title="Instrument: sizes the sub grains to your lowest note">
-                <span class="pogged-seg-label">RANGE</span>
+                <span class="pogged-seg-label">Range</span>
                 <div class="pogged-seg-btns"><button type="button" class="pogged-seg-btn" data-value="0">GTR</button><button type="button" class="pogged-seg-btn" data-value="1">BARI</button><button type="button" class="pogged-seg-btn" data-value="2">BASS</button></div>
             </div>
             <div class="pogged-seg" data-handle="filter_mode" title="Filter mode">
-                <span class="pogged-seg-label">FILTER</span>
+                <span class="pogged-seg-label">Filter</span>
                 <div class="pogged-seg-btns"><button type="button" class="pogged-seg-btn" data-value="0">LP</button><button type="button" class="pogged-seg-btn" data-value="1">BP</button><button type="button" class="pogged-seg-btn" data-value="2">HP</button></div>
             </div>
-        </div>
-    </div>
-
-    <!-- Character · Warp · Filter · Level -->
-    <div class="pogged-faders pogged-row-tone">
-        <div class="pogged-fader" data-handle="detune_cents" data-min="0" data-max="25" title="Detune (chorus on the up voices)">
-            <div class="pogged-pan-spacer"></div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
-            <span class="pogged-fader-value" data-handle-value="detune_cents"></span>
-            <span class="pogged-fader-label">DETUNE</span>
-        
-            <button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_detune" title="Send the dry through the detune chorus and Spread. Costs the dry its zero latency.">DRY</button>
-        </div>
-        <div class="pogged-fader" data-handle="spread" data-min="0" data-max="1" title="Spread (stereo delay on +5th/+1/+2)">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="spread"></span>
-            <span class="pogged-fader-label">SPREAD</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader" data-handle="attack_ms" data-min="0" data-max="2000" data-scale="log" title="Attack swell">
-            <div class="pogged-pan-spacer"></div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
-            <span class="pogged-fader-value" data-handle-value="attack_ms"></span>
-            <span class="pogged-fader-label">ATTACK</span>
-        
-            <button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_attack" title="Send the dry through the attack swell">DRY</button>
-        </div>
-        <div class="pogged-fader pogged-fader-small" data-handle="attack_sens" data-min="0" data-max="1" title="Attack sensitivity">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="attack_sens"></span>
-            <span class="pogged-fader-label">SENS</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-group-gap"></div>
-        <div class="pogged-fader" data-handle="warp" data-min="0" data-max="1" title="Warp: pedal position, heel to toe">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="warp"></span>
-            <span class="pogged-fader-label">WARP</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader pogged-fader-small" data-handle="warp_heel" data-min="-12" data-max="12" title="Warp interval at the heel">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="warp_heel"></span>
-            <span class="pogged-fader-label">HEEL</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader pogged-fader-small" data-handle="warp_toe" data-min="-12" data-max="12" title="Warp interval at the toe">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="warp_toe"></span>
-            <span class="pogged-fader-label">TOE</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-group-gap"></div>
-        <div class="pogged-fader" data-handle="lp_cutoff" data-min="20" data-max="20000" data-scale="log" title="Filter frequency">
-            <div class="pogged-pan-spacer"></div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
-            <span class="pogged-fader-value" data-handle-value="lp_cutoff"></span>
-            <span class="pogged-fader-label">FREQ</span>
-        
-            <button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_filter" title="Send the dry through the filter">DRY</button>
-        </div>
-        <div class="pogged-fader pogged-fader-small" data-handle="lp_q" data-min="0.5" data-max="8" data-scale="log" title="Filter resonance">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="lp_q"></span>
-            <span class="pogged-fader-label">RES</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader" data-handle="filter_env" data-min="-1" data-max="1" title="Filter envelope depth (centre = off)">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="filter_env"></span>
-            <span class="pogged-fader-label">ENV</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader pogged-fader-small" data-handle="filter_env_a" data-min="1" data-max="1000" data-scale="log" title="Filter envelope attack">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="filter_env_a"></span>
-            <span class="pogged-fader-label">ATK</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader pogged-fader-small" data-handle="filter_env_d" data-min="1" data-max="2000" data-scale="log" title="Filter envelope decay">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="filter_env_d"></span>
-            <span class="pogged-fader-label">DEC</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader pogged-fader-small" data-handle="filter_sens" data-min="0" data-max="1" title="Filter envelope trigger sensitivity">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="filter_sens"></span>
-            <span class="pogged-fader-label">TRIG</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-group-gap"></div>
-        <div class="pogged-fader" data-handle="input_gain" data-min="0.5" data-max="3" title="Input gain: the level seen at the input">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="input_gain"></span>
-            <span class="pogged-fader-label">IN</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
-        <div class="pogged-fader" data-handle="out_level" data-min="0" data-max="2" title="Output level">
-            <div class="pogged-pan-spacer">    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div>    <div class="pogged-lamp-spacer"></div>
-        </div>
-            <span class="pogged-fader-value" data-handle-value="out_level"></span>
-            <span class="pogged-fader-label">OUT</span>
-            <div class="pogged-lamp-spacer"></div>
-        </div>
+            <div class="pogged-setup-knobs"><div class="pogged-knob" data-handle="filter_env_a" data-min="1" data-max="1000" data-scale="log" title="Filter envelope attack"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">ENV ATK</span></div><div class="pogged-knob" data-handle="filter_env_d" data-min="1" data-max="2000" data-scale="log" title="Filter envelope decay"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">ENV DEC</span></div><div class="pogged-knob" data-handle="filter_sens" data-min="0" data-max="1" title="Filter envelope trigger sensitivity"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">ENV TRIG</span></div><div class="pogged-knob" data-handle="warp_heel" data-min="-12" data-max="12" data-detent="0" title="Warp interval at the heel"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">WARP HEEL</span></div><div class="pogged-knob" data-handle="warp_toe" data-min="-12" data-max="12" data-detent="0" title="Warp interval at the toe"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">WARP TOE</span></div></div>
     </div>
 
     <div class="pogged-tooltip"></div>

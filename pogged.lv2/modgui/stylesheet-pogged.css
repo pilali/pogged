@@ -1,8 +1,10 @@
 /* ============================================================
    POGGED — custom modgui stylesheet
-   Layout: cream EHX-style panel. Two rows of vertical faders —
-   voices (with pan pots) + a switch grid on top, then
-   character | warp | filter | level. Red POGGED logo = bypass.
+   Layout: cream EHX-style panel, laid out after the real POG3 —
+   one board (level | voices | attack/filter/detune) where the
+   secondary parameters are small knobs ABOVE the fader they
+   modify, plus a SETUP strip for what the pedal keeps in its
+   OLED. Red POGGED logo = bypass.
    The JUCE editor mirrors this layout control for control.
    ============================================================ */
 
@@ -19,9 +21,9 @@
         0 4px 18px rgba(0,0,0,0.45);
     color: #2b2622;
     font-family: "Nexa", "Questrial", sans-serif;
-    height: 560px;
+    height: 500px;
     position: absolute;
-    width: 880px;
+    width: 640px;
     overflow: hidden;
 }
 
@@ -67,120 +69,32 @@
     top: 56px;
 }
 
-/* ── Fader board ────────────────────────────────────────── */
-/* Two rows at fixed tops rather than one stretched between top/bottom: the
-   rows must not resize each other, or the track lengths would drift apart
-   and the two rows would stop reading as one instrument. */
-.pogged-panel{{{cns}}} .pogged-faders {
+/* ── Board ──────────────────────────────────────────────── */
+.pogged-panel{{{cns}}} .pogged-board {
     align-items: flex-end;
     display: flex;
     gap: 12px;
-    left: 24px;
-    position: absolute;
-    right: 24px;
-    z-index: 30;
-}
-.pogged-panel{{{cns}}} .pogged-row-voices {
-    height: 196px;
-    justify-content: flex-start;
-    top: 84px;
-}
-.pogged-panel{{{cns}}} .pogged-row-tone {
-    height: 208px;
+    height: 300px;
     justify-content: center;
-    top: 308px;
-}
-
-/* ── Switch grid ────────────────────────────────────────── */
-/* Rides beside the voice faders: enums and toggles, one button per value.
-   Same order and wording as the JUCE editor's. */
-.pogged-panel{{{cns}}} .pogged-switches {
-    align-self: center;
-    display: grid;
-    flex: 1 1 auto;
-    gap: 12px 16px;
-    grid-template-columns: repeat(3, 1fr);
-    margin-left: 34px;
-    min-width: 0;
-}
-/* Lamps, not an OFF/ON pair: on a pedal red means engaged, so lighting an
-   "OFF" segment reads exactly backwards. Each DRY lamp lives at the foot of
-   the column of the effect it routes (the pedal groups them under one "DRY"
-   bracket rather than in a block of their own) — so the button is next to the
-   thing it acts on. */
-.pogged-panel{{{cns}}} .pogged-lamp {
-    background: linear-gradient(180deg, #efe5d0, #d8cbb0);
-    border: 1px solid #8d8272;
-    color: #4a4238;
-    cursor: pointer;
-    flex: 1 1 0;
-    font-family: inherit;
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    min-width: 0;
-    padding: 5px 0;
-}
-.pogged-panel{{{cns}}} .pogged-lamp + .pogged-lamp { border-left: none; }
-.pogged-panel{{{cns}}} .pogged-lamp:first-child { border-radius: 4px 0 0 4px; }
-.pogged-panel{{{cns}}} .pogged-lamp:last-child  { border-radius: 0 4px 4px 0; }
-.pogged-panel{{{cns}}} .pogged-lamp.is-on {
-    background: linear-gradient(180deg, #e0484a, #c22326);
-    border-color: #8e191b;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3),
-                0 0 8px rgba(194,35,38,0.45);
-    color: #fff6ee;
-}
-.pogged-panel{{{cns}}} .pogged-seg {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-}
-.pogged-panel{{{cns}}} .pogged-seg-label {
-    color: #6b6154;
-    font-size: 9px;
-    letter-spacing: 1.6px;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-.pogged-panel{{{cns}}} .pogged-seg-btns { display: flex; }
-.pogged-panel{{{cns}}} .pogged-seg-btn {
-    background: linear-gradient(180deg, #efe5d0, #d8cbb0);
-    border: 1px solid #8d8272;
-    color: #4a4238;
-    cursor: pointer;
-    flex: 1 1 0;
-    font-family: inherit;
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    min-width: 0;
-    padding: 5px 0;
-}
-.pogged-panel{{{cns}}} .pogged-seg-btn + .pogged-seg-btn { border-left: none; }
-.pogged-panel{{{cns}}} .pogged-seg-btn:first-child { border-radius: 4px 0 0 4px; }
-.pogged-panel{{{cns}}} .pogged-seg-btn:last-child  { border-radius: 0 4px 4px 0; }
-.pogged-panel{{{cns}}} .pogged-seg-btn.is-on {
-    background: linear-gradient(180deg, #e0484a, #c22326);
-    border-color: #8e191b;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3),
-                0 0 8px rgba(194,35,38,0.45);
-    color: #fff6ee;
+    left: 20px;
+    position: absolute;
+    right: 20px;
+    top: 78px;
+    z-index: 30;
 }
 .pogged-panel{{{cns}}} .pogged-group-gap {
     border-left: 1px solid rgba(43,38,34,0.25);
-    height: 78%;
-    margin: 0 4px;
+    height: 74%;
+    margin: 0 3px;
 }
 
 /* Every fader is one fixed-width column, so the tracks are evenly spaced.
    flex:0 0 + min-width:0 are both load-bearing: a flex item defaults to
    min-width:auto and so cannot shrink below its own min-content width, which
    for these nowrap labels means each column would otherwise be as wide as its
-   longest label ("RES" 26px vs "+1 OCT" 45px) and the pitch would wander.
-   Labels/values overflow this box, centred — the typography below is sized so
-   they never reach the neighbouring column. */
+   longest label and the pitch would wander. Labels/values overflow this box,
+   centred. .pogged-fader-wide carries two knobs side by side (the pedal's own
+   FILTER block is wide for exactly that reason). */
 .pogged-panel{{{cns}}} .pogged-fader {
     align-items: center;
     cursor: ns-resize;
@@ -191,28 +105,33 @@
     min-width: 0;
     width: 36px;
 }
+.pogged-panel{{{cns}}} .pogged-fader-wide { flex-basis: 52px; width: 52px; }
 
-/* ── Pan pots (POG3) ────────────────────────────────────── */
-/* One small pot rides above each voice fader. Columns without a pan carry
-   .pogged-pan-spacer of the same height, so every track still starts on the
-   same line. --pan is 0..1 (0 = hard left, .5 = centre, 1 = hard right). */
-.pogged-panel{{{cns}}} .pogged-pan,
-.pogged-panel{{{cns}}} .pogged-pan-spacer {
+/* ── Knobs ──────────────────────────────────────────────── */
+/* Small pots riding above the fader they modify. Columns without one still
+   reserve the row's height, or their tracks would start on a different line
+   from their neighbours'. --knob is 0..1 across the control's own range. */
+.pogged-panel{{{cns}}} .pogged-knobs {
+    align-items: flex-end;
+    display: flex;
     flex: 0 0 auto;
-    height: 22px;
-    margin-bottom: 6px;
-    width: 22px;
+    gap: 6px;
+    height: 34px;
+    justify-content: center;
 }
-.pogged-panel{{{cns}}} .pogged-pan {
+.pogged-panel{{{cns}}} .pogged-knob {
     background: radial-gradient(circle at 50% 35%, #fdf8ec, #cfc3a8 70%, #b3a68c);
     border: 1px solid #8d8272;
     border-radius: 50%;
     box-shadow: 0 1px 3px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.7);
     cursor: ns-resize;
+    flex: 0 0 auto;
+    height: 22px;
     position: relative;
+    width: 22px;
 }
 /* Pointer: a line from centre to rim, rotated -135°..+135° across the range. */
-.pogged-panel{{{cns}}} .pogged-pan-dial {
+.pogged-panel{{{cns}}} .pogged-knob-dial {
     background: #2b2622;
     border-radius: 1px;
     height: 8px;
@@ -220,20 +139,70 @@
     margin-left: -1px;
     position: absolute;
     top: 2px;
-    transform: rotate(calc((var(--pan, 0.5) - 0.5) * 270deg));
+    transform: rotate(calc((var(--knob, 0.5) - 0.5) * 270deg));
     transform-origin: 50% 9px;
     width: 2px;
 }
+/* Caption above the pot. Absolute + nowrap so a long one ("WARP HEEL") cannot
+   widen the 22px pot and push the column out of pitch. */
+.pogged-panel{{{cns}}} .pogged-knob-label {
+    color: #6b6154;
+    font-size: 7px;
+    left: 50%;
+    letter-spacing: 0.4px;
+    position: absolute;
+    text-transform: uppercase;
+    top: -9px;
+    transform: translateX(-50%);
+    white-space: nowrap;
+}
 /* Centre detent mark on the panel above the pot. */
-.pogged-panel{{{cns}}} .pogged-pan::after {
+.pogged-panel{{{cns}}} .pogged-knob[data-detent]::after {
     background: rgba(43,38,34,0.45);
     content: "";
     height: 3px;
     left: 50%;
     margin-left: -0.5px;
     position: absolute;
-    top: -5px;
+    top: -4px;
     width: 1px;
+}
+
+/* Spacers: a column that carries no L..R marks, no keycap or no bottom label
+   must still reserve their height. Otherwise its track is longer and its
+   readout sits on a different line from its neighbours' — the same trap the
+   knob and lamp spacers exist for. */
+.pogged-panel{{{cns}}} .pogged-lr-spacer  { flex: 0 0 auto; height: 9px;  margin: 1px 0 2px; }
+.pogged-panel{{{cns}}} .pogged-key-spacer { flex: 0 0 auto; height: 15px; margin-bottom: 5px; }
+.pogged-panel{{{cns}}} .pogged-label-spacer { flex: 0 0 auto; height: 12px; }
+
+/* The pot's L..R marks, as printed on the pedal. */
+.pogged-panel{{{cns}}} .pogged-lr {
+    color: #6b6154;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 7px;
+    height: 9px;
+    justify-content: space-between;
+    letter-spacing: 0.5px;
+    margin: 1px 0 2px;
+    width: 26px;
+}
+/* Voice name keycap: the pedal names each voice once, in a dark key. */
+.pogged-panel{{{cns}}} .pogged-key {
+    background: #2b2622;
+    border-radius: 3px;
+    color: #f3ead8;
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-weight: 700;
+    height: 15px;
+    letter-spacing: 0.4px;
+    line-height: 15px;
+    margin-bottom: 5px;
+    padding: 0;
+    text-align: center;
+    width: 32px;
 }
 
 /* Track: dark slot; fill rises with the value; cap rides on top of it. */
@@ -274,7 +243,12 @@
 .pogged-panel{{{cns}}} .pogged-fader-value {
     color: #6b6154;
     font-size: 9px;
-    margin-top: 7px;
+    /* Clears the cap, which hangs 9px BELOW the track at value 0 (its own
+       height is centred on the value). At 6px the cap struck through every
+       readout that sat at the bottom of its travel — invisible to a geometry
+       check that only compares tops and baselines, so modgui_measure.js now
+       checks the cap against the readout too. */
+    margin-top: 14px;
     min-height: 12px;
     white-space: nowrap;
 }
@@ -282,55 +256,150 @@
     color: #2b2622;
     font-size: 10px;
     font-weight: 700;
+    height: 12px;
     letter-spacing: 0.3px;
-    margin-top: 1px;
+    line-height: 12px;
     white-space: nowrap;
 }
 
-/* Every row-2 column reserves the lamp's height whether it carries one or not,
-   so the labels sit on one line — the same reason .pogged-pan-spacer exists. */
+/* ── Buttons ────────────────────────────────────────────── */
+/* Lamps, not an OFF/ON pair: on a pedal red means engaged, so lighting an
+   "OFF" segment would read exactly backwards. */
+.pogged-panel{{{cns}}} .pogged-lamp,
+.pogged-panel{{{cns}}} .pogged-seg-btn {
+    background: linear-gradient(180deg, #efe5d0, #d8cbb0);
+    border: 1px solid #8d8272;
+    color: #4a4238;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    min-width: 0;
+}
+.pogged-panel{{{cns}}} .pogged-lamp.is-on,
+.pogged-panel{{{cns}}} .pogged-seg-btn.is-on {
+    background: linear-gradient(180deg, #e0484a, #c22326);
+    border-color: #8e191b;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3),
+                0 0 8px rgba(194,35,38,0.45);
+    color: #fff6ee;
+}
+/* Each DRY lamp sits at the foot of its own effect's column. Columns without
+   one reserve the same height, or their labels would sit on a different line. */
+.pogged-panel{{{cns}}} .pogged-fader-lamp,
 .pogged-panel{{{cns}}} .pogged-lamp-spacer {
     flex: 0 0 auto;
-    height: 16px;
+    height: 15px;
     margin-top: 5px;
-}
-
-/* The column-foot DRY lamps: small, and they must not look like a fader cap. */
-.pogged-panel{{{cns}}} .pogged-fader-lamp {
-    border-radius: 3px;
-    flex: 0 0 auto;
-    font-size: 8px;
-    letter-spacing: 0.4px;
-    height: 16px;
-    line-height: 1;
-    margin-top: 5px;
-    padding: 0;
     width: 30px;
 }
+.pogged-panel{{{cns}}} .pogged-fader-lamp {
+    border-radius: 3px;
+    font-size: 7.5px;
+    line-height: 1;
+    padding: 0;
+}
 
-/* Voice name keycap + the pot's L..R marks, as on the pedal's own panel. */
-.pogged-panel{{{cns}}} .pogged-lr {
+/* ── Brackets ───────────────────────────────────────────── */
+/* The pedal groups the DRY buttons under one bracket and hangs FOCUS under the
+   voices it switches; both are drawn under the board rather than in the flow. */
+.pogged-panel{{{cns}}} .pogged-bracket {
+    border-bottom: 1px solid rgba(43,38,34,0.35);
+    border-left: 1px solid rgba(43,38,34,0.35);
+    border-right: 1px solid rgba(43,38,34,0.35);
+    bottom: -14px;
+    height: 7px;
+    position: absolute;
+    z-index: 31;
+}
+.pogged-panel{{{cns}}} .pogged-bracket span {
+    background: #ece2ca;
+    bottom: -7px;
     color: #6b6154;
+    font-size: 8px;
+    left: 50%;
+    letter-spacing: 1.4px;
+    padding: 0 5px;
+    position: absolute;
+    text-transform: uppercase;
+    transform: translateX(-50%);
+}
+/* A bracket spans its group from the FIRST column's left edge to the LAST
+   column's right edge, board-relative (the board is 600px wide, starting at
+   the panel's 20px margin). Setting left AND right — never width — makes the
+   1px borders land on those edges instead of pushing past them.
+     FOCUS: the six voices,  126..402 absolute -> 106..382
+     DRY:   the three fx,    433..581 absolute -> 413..561
+   These are derived from the column geometry, not guessed: the old hardcoded
+   `width` pair predated the wider FILTER column, so the DRY bracket cut
+   through the ATTACK lamp and overhung the right by 42px. modgui_measure.js
+   now checks both brackets against the columns they group, so a column change
+   fails the tool instead of silently sliding the bracket off its buttons. */
+.pogged-panel{{{cns}}} .pogged-bracket-focus { left: 106px; right: 218px; }
+.pogged-panel{{{cns}}} .pogged-bracket-dry   { left: 413px; right: 39px;  }
+.pogged-panel{{{cns}}} .pogged-bracket-focus .pogged-lamp {
+    border-radius: 3px;
+    bottom: -10px;
+    font-size: 8px;
+    left: 50%;
+    padding: 2px 8px;
+    position: absolute;
+    transform: translateX(-50%);
+}
+
+/* ── Setup strip ────────────────────────────────────────── */
+/* What the POG3 keeps in its OLED menu. Visually set apart from the
+   performance controls above, which is the pedal's own hierarchy. */
+.pogged-panel{{{cns}}} .pogged-setup {
+    align-items: flex-end;
+    border-top: 1px solid rgba(43,38,34,0.18);
+    bottom: 16px;
+    display: flex;
+    gap: 18px;
+    left: 20px;
+    padding-top: 16px;
+    position: absolute;
+    right: 20px;
+    z-index: 30;
+}
+.pogged-panel{{{cns}}} .pogged-setup-title {
+    color: #a0968a;
+    font-size: 8px;
+    left: 0;
+    letter-spacing: 2px;
+    position: absolute;
+    text-transform: uppercase;
+    top: 4px;
+}
+.pogged-panel{{{cns}}} .pogged-seg {
     display: flex;
     flex: 0 0 auto;
-    font-size: 7px;
-    justify-content: space-between;
-    letter-spacing: 0.5px;
-    margin: -4px 0 3px;
-    width: 26px;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
 }
-.pogged-panel{{{cns}}} .pogged-key {
-    background: #2b2622;
-    border-radius: 3px;
-    color: #f3ead8;
-    flex: 0 0 auto;
+.pogged-panel{{{cns}}} .pogged-seg-label {
+    color: #6b6154;
+    font-size: 8px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.pogged-panel{{{cns}}} .pogged-seg-btns { display: flex; }
+.pogged-panel{{{cns}}} .pogged-seg-btn {
     font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
-    margin-bottom: 6px;
-    padding: 2px 0;
-    text-align: center;
-    width: 34px;
+    padding: 4px 7px;
+}
+.pogged-panel{{{cns}}} .pogged-seg-btn + .pogged-seg-btn { border-left: none; }
+.pogged-panel{{{cns}}} .pogged-seg-btn:first-child { border-radius: 3px 0 0 3px; }
+.pogged-panel{{{cns}}} .pogged-seg-btn:last-child  { border-radius: 0 3px 3px 0; }
+
+.pogged-panel{{{cns}}} .pogged-setup-knobs {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 36px;
+    justify-content: flex-end;
+    padding-right: 4px;
 }
 
 /* ── Drag tooltip ───────────────────────────────────────── */
