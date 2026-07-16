@@ -430,3 +430,51 @@ Mon avis : (B) a le meilleur rapport résultat/risque à court terme, et le
 **split transitoire** (détection + réinjection des attaques, `OnsetDetector`
 déjà présent) est le gain le plus tangible vers « ça sonne comme un POG ». Le
 banc reste une piste de fond pour la latence variable.
+
+---
+
+## 11. Spike 4 — l'indice « première note nette » et le mur confirmé
+
+Retour d'écoute sur l'overlap : *« son sale, mais la toute première note de
+l'arpège est beaucoup plus nette »*. Indice précieux : la première note est
+seule et les canaux sont fraîchement réinitialisés (cohérents) ; la saleté
+arrive avec la **polyphonie** (un canal voit alors deux partiels, son estimation
+de fréquence instantanée est corrompue, θ dérive). L'overlap **est** le shifter
+hétérodyne canonique — fidèle — sa seule faille est cette décorrélation.
+
+Quatre leviers testés ce tour-ci, mesurés (timbre = h2, doit valoir ~0.44 ;
+cohérence = perturbation d'arpège) :
+
+| Levier | Timbre (h2) | Cohérence (arpège) |
+|---|---|---|
+| overlap pur (retenu) | **0.44** ✓ | 6,3 dB ✗ |
+| verrouillage d'identité continu (§10) | ~0 ✗ | — |
+| **PLL de fréquence par membre** (LOCK_C) | ~0.01 ✗ | 0,55 dB ✓ |
+| **canaux plus étroits** (Q=12, CPO=12) | 0.048 ✗ | 5,3 dB ✗ |
+
+Le PLL de fréquence **résout la cohérence** (arpège 8 → 0,55 dB) mais annule le
+timbre : forcer les membres sur la phase d'identité fait sommer les basebands
+bruts Σz_k, qui **s'annulent** (chaque canal est à une phase différente).
+Balayage de LOCK_C : **aucun point d'équilibre** — timbre et cohérence
+s'échangent directement. Canaux plus étroits : améliorent l'accord mais dégradent
+timbre ET latence, sans régler l'arpège.
+
+**Méta-conclusion (solide, à quatre angles).** Sur ce banc, **fidélité de timbre
+et cohérence polyphonique sont en opposition directe** avec les resynthèses
+qu'on sait construire sans trame. Les seules issues connues — isoler un partiel
+par canal (→ résolution fine → latence → le vocodeur) ou re-photographier par
+trame (→ le vocodeur) — **ramènent toutes au phase vocoder**. Le banc de filtres
+achète la **latence dépendante de la fréquence** ; il ne sait pas acheter la
+cohérence sans trame. C'est un résultat de recherche, pas un échec d'exécution.
+
+### Pistes restantes, honnêtes
+- **(A′) Granulaire multibande** — piste *vraiment* différente, pas encore
+  essayée : découper en sous-bandes étroites et transposer chaque sous-bande par
+  **resampling temporel** (granulaire), pas par ré-oscillation. Une sous-bande
+  étroite est quasi-sinusoïdale, donc le grain y est propre et il n'y a **aucun
+  accumulateur de phase à décorréler**. C'est le §3.2 dyadique repris côté temps.
+- **(B) Split transitoire sur le vocodeur** — le plus gros gain perceptif vers
+  « POG », `OnsetDetector` déjà là.
+
+Le banc hétérodyne spectral (Spikes 1–4) est archivé comme dead-end documenté
+pour la fidélité polyphonique, gardé pour sa leçon sur la latence variable.
