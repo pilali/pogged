@@ -13,6 +13,7 @@
 #include "stream_vocoder.hpp"
 #endif
 #include "delay_line.hpp"
+#include "freeze_loop.hpp"
 #include "onset_detector.hpp"
 #include "biquad.hpp"
 #include "envelope.hpp"
@@ -191,6 +192,18 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 // vs 85 ms), so a hard switch would jump the signal. Both engines run only
 // during the fade; at rest exactly one does.
 static constexpr float FOCUS_XFADE_MS = 150.0f;
+
+// ── Freeze + Gliss ───────────────────────────────────────────────────────────
+// The pedal's position sets the glide rate, "the closer the pedal is to the toe
+// position the slower the glissando rate". The two ends are not published, so
+// these are ears-first choices and the obvious knobs to revisit: at the heel end
+// of the sweep the next note arrives almost at once, at the toe it takes two
+// seconds to arrive.
+static constexpr float FRZ_GLIDE_MIN_MS = 20.0f;
+static constexpr float FRZ_GLIDE_MAX_MS = 2000.0f;
+// Swapping the ring between live and loop is a hard cut; every hard switch in
+// this engine has clicked, so it is crossfaded like all the others.
+static constexpr float FRZ_XFADE_MS = 25.0f;
 // Filter coefficients are refreshed on this stride while the sweep moves.
 // Per-sample would mean transcendentals per sample per channel; 16 samples is
 // a 3 kHz control rate at 48k, far above anything a filter sweep resolves.
@@ -234,6 +247,9 @@ struct PoggedDsp {
     // out at 3 Hz, so even a 4096-sample block still samples it ~6x per cycle.
     float det_phase = 0.0f;
     float g_warp_st = 0.0f;   // smoothed Warp bend, in semitones
+    FreezeLoop    frz;
+    bool          frz_held = false;   // pedal off the heel on the last block
+    float         g_frz    = 0.0f;    // live -> loop crossfade, 0..1
     // Detune-mix coefficient, ramped 0 → 0.5 so enabling/disabling detune
     // crossfades the (phase-independent) detuned voice in instead of hard-
     // switching to the 50/50 average, which was an audible click.
@@ -360,6 +376,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     }
 #endif
 
+    p->frz.init(sample_rate);
     p->det.init(sr);
     p->filt_det.init(sr);
     pogged_dsp_reset(p);
@@ -404,6 +421,9 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->g_filtmix     = 0.0f;
     p->det_phase     = 0.0f;
     p->g_warp_st     = 0.0f;
+    p->frz.reset();
+    p->frz_held      = false;
+    p->g_frz         = 0.0f;
     p->p_dry = p->p_sub1 = p->p_sub2 = 0.0f;
     p->p_up5 = p->p_up1 = p->p_up2 = 0.0f;
     p->g_spread = 0.0f;
@@ -523,6 +543,24 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 #endif
     }
 
+    // ── Freeze + Gliss ────────────────────────────────────────────────────
+    // Capturing on the pedal LEAVING the heel is what makes this work at all:
+    // at that instant the ring still holds the live input, because the ring is
+    // only fed the loop while frozen. Coming back to the heel refills it with
+    // whatever is being played, so the next rise captures the next note — which
+    // is exactly the pedal move the manual describes.
+    const float frz_t  = std::clamp(p_->freeze, 0.0f, 1.0f);
+    const bool  frz_on = frz_t > 1e-3f;
+    if (frz_on && !p->frz_held) {
+        const float glide_ms = FRZ_GLIDE_MIN_MS
+                             + frz_t * (FRZ_GLIDE_MAX_MS - FRZ_GLIDE_MIN_MS);
+        p->frz.capture(p->ring.data(), p->mask, p->wpos,
+                       (int)(glide_ms * 0.001f * sr));
+    }
+    p->frz_held = frz_on;
+    const float frz_target = (frz_on && p->frz.armed()) ? 1.0f : 0.0f;
+    const float frz_c = 1.0f - std::exp(-1.0f / (FRZ_XFADE_MS * 0.001f * sr));
+
     // Which shifters run this block. A voice is live while its target OR its
     // smoothed gain is audible, so it fades out before being skipped.
     // Assigned by index, not as a positional list: the enum is free to be
@@ -601,8 +639,18 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->g_in += gc * (in_t - p->g_in);
         const float x = in[i] * p->g_in;
 
+        // Freeze feeds the ring the loop instead of the input. Every voice and
+        // both engines read the ring exactly as before and never learn that
+        // time stopped.
+        p->g_frz += frz_c * (frz_target - p->g_frz);
+        float src = x;
+        if (p->g_frz > 1e-4f) {
+            const float loop = p->frz.process();
+            src = x + p->g_frz * (loop - x);
+        }
+
         // Write first: voices read at least MARGIN samples behind wpos.
-        ring[p->wpos & mask] = x;
+        ring[p->wpos & mask] = src;
         ++p->wpos;
 
         p->g_dry  += gc * (dry_t  - p->g_dry);

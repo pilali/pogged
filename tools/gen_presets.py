@@ -58,7 +58,9 @@ PAN_DEFAULTS.update({"filter_mode": 0.0, "filter_env": 0.0,
                      # Warp is a performance gesture, not a sound: it ships at
                      # the heel (= identity) with the pedal's own heel/toe
                      # range, so a preset only arms it — the player sweeps it.
-                     "warp": 0.0, "warp_heel": 0.0, "warp_toe": 12.0})
+                     "warp": 0.0, "warp_heel": 0.0, "warp_toe": 12.0,
+                     # Freeze is a foot gesture, so it ships at the heel (live).
+                     "freeze": 0.0})
 
 
 def P(name, **vals):
@@ -126,7 +128,7 @@ ORDER = sorted([
     "spread", "filter_mode", "filter_env", "filter_env_a", "filter_env_d",
     "filter_sens", "range_mode", "focus",
     "input_gain", "dry_attack", "dry_filter", "dry_detune",
-    "warp", "warp_heel", "warp_toe",
+    "warp", "warp_heel", "warp_toe", "freeze",
 ])
 
 

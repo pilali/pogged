@@ -84,6 +84,22 @@ typedef struct {
                                             bend BELOW a voice's own pitch.
                                             Defaults (heel 0, toe +12) are the
                                             pedal's, and warp = 0 is identity. */
+    float freeze;        /* idx 36 [0 – 1]  POG3 FREEZE+GLISS, and again simply
+                                            where the expression pedal is.
+                                            Heel (0) = live. Moving off the heel
+                                            freezes what you hear; the octaves
+                                            hold indefinitely while the dry
+                                            stays live over them. Returning to
+                                            the heel and rising again captures
+                                            the next note and glides to it, the
+                                            position setting the rate — toe =
+                                            slowest. Deliberately absent from
+                                            both panels: it is a foot control,
+                                            so it lives in the host's own
+                                            addressing (MOD-UI's settings panel,
+                                            or a DAW's automation / MIDI learn)
+                                            rather than as a fader nobody would
+                                            drag by hand.                       */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

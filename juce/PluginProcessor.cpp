@@ -90,6 +90,13 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     p.add(std::make_unique<AF>(pid("warp_heel"), "Warp Heel", Range(-12.0f, 12.0f), 0.0f));
     p.add(std::make_unique<AF>(pid("warp_toe"), "Warp Toe", Range(-12.0f, 12.0f), 12.0f));
 
+    // FREEZE+GLISS (POG3). A parameter but NOT a control in the editor: it is a
+    // foot control, so it belongs in the host's automation / MIDI learn (where
+    // every parameter already lives, editor or not) rather than as a fader
+    // nobody would drag by hand. PoggedEditor deliberately has no widget bound
+    // to it, and the same is true of the modgui.
+    p.add(std::make_unique<AF>(pid("freeze"), "Freeze + Gliss", Range(0.0f, 1.0f), 0.0f));
+
     return p;
 }
 
@@ -133,6 +140,7 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pWarp     = raw("warp");
     pWarpHeel = raw("warp_heel");
     pWarpToe  = raw("warp_toe");
+    pFreeze   = raw("freeze");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -186,7 +194,8 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pFiltMode->load(), pFiltEnv->load(), pFiltEnvA->load(),
         pFiltEnvD->load(), pFiltSens->load(), pRange->load(), pFocus->load(),
         pInGain->load(), pDryAtk->load(), pDryFilt->load(), pDryDet->load(),
-        pWarp->load(), pWarpHeel->load(), pWarpToe->load()
+        pWarp->load(), pWarpHeel->load(), pWarpToe->load(),
+        pFreeze->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.
