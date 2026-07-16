@@ -9,9 +9,11 @@ takes from the newer POG3 the **fifth-up voice**, **per-voice panning**,
 
 **Mono in → stereo out.** Each of the six voices has its own pan.
 
-No pitch tracking — the whole polyphonic signal is transposed by a streaming
-granular engine (correlation-aligned grain splicing), so chords work and the
-dry path stays at zero latency.
+No pitch tracking — the whole polyphonic signal is transposed, so chords work
+and the dry path stays at zero latency. Two engines, switchable (Focus):
+a streaming **granular** shifter (correlation-aligned grain splicing, 3 ms) and
+a streaming **phase vocoder** (per-peak spectral translation, clean on chords,
+~85 ms).
 
 - **LV2** — Linux desktop, MOD Audio (Dwarf / Duo X), Raspberry Pi...
 - **VST3 / AU / Standalone** — macOS (universal) and Windows, via JUCE
@@ -40,6 +42,7 @@ components).
 | Filter Env Attack | 1–1000 ms | Sweep rise time. |
 | Filter Env Decay | 1–2000 ms | Sweep fall time. |
 | Filter Env Sens | 0–100 % | Sweep trigger sensitivity — separate from Attack Sens, as on the POG3. |
+| Focus | Granular / Vocoder | Which transposition engine (POG3's FOCUS). **Granular** is the POG sound and answers in 3 ms, but a chord makes its grain splices cancel unevenly (+4.8 dB of ripple on the sub). **Vocoder** translates each spectral peak independently and is measurably perfect on chords (+0.0 dB over an ideal shift) at ~85 ms of latency. The dry path stays at zero either way. |
 | Range | Guitar / Baritone / Bass | Lowest note the instrument plays. Sizes the sub voices' grains, since a sub emits an octave *below* what you play (a baritone's low B lands the sub at 31 Hz). Longer grains stabilise single low notes but delay the sub and make chords ripple more — hence a switch, not an assumption. |
 | Output | 0–200 % | Master output gain into a soft clipper. |
 | Pan (×6) | L–C–R | Per-voice placement in the stereo field (dry, −1, −2, +5th, +1, +2). Centre is full level on **both** outputs, so a single output still carries everything. |

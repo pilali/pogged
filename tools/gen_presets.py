@@ -39,7 +39,10 @@ PAN_DEFAULTS.update({"filter_mode": 0.0, "filter_env": 0.0,
                      "filter_sens": 0.5,
                      # Range is the player's instrument, not a preset's sound:
                      # every preset ships at Guitar and the user sets it once.
-                     "range_mode": 0.0})
+                     "range_mode": 0.0,
+                     # Focus likewise: latency vs chord purity is the player's
+                     # call, not a preset's. Ships granular = the POG sound.
+                     "focus": 0.0})
 
 
 def P(name, **vals):
@@ -105,7 +108,7 @@ ORDER = sorted([
     "lp_q", "out_level",
     "pan_dry", "pan_sub1", "pan_sub2", "pan_up5", "pan_up1", "pan_up2",
     "spread", "filter_mode", "filter_env", "filter_env_a", "filter_env_d",
-    "filter_sens", "range_mode",
+    "filter_sens", "range_mode", "focus",
 ])
 
 

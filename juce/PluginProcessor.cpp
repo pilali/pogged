@@ -67,6 +67,12 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
         pid("range_mode"), "Range",
         juce::StringArray { "Guitar", "Baritone", "Bass" }, 0));
 
+    // FOCUS (POG3): which transposition engine. Granular is the POG sound and
+    // answers in 3 ms; the phase vocoder is clean on chords but lags ~85 ms.
+    p.add(std::make_unique<juce::AudioParameterChoice>(
+        pid("focus"), "Focus",
+        juce::StringArray { "Granular (fast)", "Vocoder (clean)" }, 0));
+
     return p;
 }
 
@@ -102,6 +108,7 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pFiltEnvD = raw("filter_env_d");
     pFiltSens = raw("filter_sens");
     pRange    = raw("range_mode");
+    pFocus    = raw("focus");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -153,7 +160,7 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pPanDry->load(), pPanSub1->load(), pPanSub2->load(),
         pPanUp5->load(), pPanUp1->load(), pPanUp2->load(), pSpread->load(),
         pFiltMode->load(), pFiltEnv->load(), pFiltEnvA->load(),
-        pFiltEnvD->load(), pFiltSens->load(), pRange->load()
+        pFiltEnvD->load(), pFiltSens->load(), pRange->load(), pFocus->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.

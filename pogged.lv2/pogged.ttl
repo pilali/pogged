@@ -295,4 +295,20 @@
         lv2:scalePoint [ rdfs:label "Guitar" ;   rdf:value 0 ] ;
         lv2:scalePoint [ rdfs:label "Baritone" ; rdf:value 1 ] ;
         lv2:scalePoint [ rdfs:label "Bass" ;     rdf:value 2 ]
+    ] ,
+
+    # ── FOCUS: pitch engine (POG3) ───────────────────────────────────────
+    # Granular: 3 ms latency, +4.8 dB artifact on a chord (the POG sound).
+    # Vocoder:  85 ms latency, +0.0 dB — the ideal-shift floor.
+    [
+        a lv2:ControlPort, lv2:InputPort ;
+        lv2:index   28 ;
+        lv2:symbol  "focus" ;
+        lv2:name    "Focus" ;
+        lv2:minimum 0 ;
+        lv2:maximum 1 ;
+        lv2:default 0 ;
+        lv2:portProperty lv2:integer, lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "Granular (fast)" ; rdf:value 0 ] ;
+        lv2:scalePoint [ rdfs:label "Vocoder (clean)" ; rdf:value 1 ]
     ] .

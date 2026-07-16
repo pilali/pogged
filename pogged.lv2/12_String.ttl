@@ -38,6 +38,9 @@
 		lv2:symbol "filter_sens" ;
 		pset:value 0.5
 	] , [
+		lv2:symbol "focus" ;
+		pset:value 0.0
+	] , [
 		lv2:symbol "lp_cutoff" ;
 		pset:value 8000.0
 	] , [

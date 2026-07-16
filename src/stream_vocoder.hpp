@@ -23,9 +23,15 @@
 // Pitch is shifted by translating peaks, NOT by resampling, so the frame is
 // always read at normal speed. That is what makes streaming natural here.
 //
-// FFT size is controlled at compile time:
-//   -DPOGGED_PV_N=2048   (default; Pi 5, x86, VST/AU)
-//   -DPOGGED_PV_N=1024   (lighter)
+// FFT size is controlled at compile time. 4096 is the default because 2048 is
+// NOT enough for a guitar chord in the low register: its bins are 23.4 Hz at
+// 48 kHz, while an E major triad's partials sit 42.8 Hz apart — 1.8 bins, so
+// the Hann mainlobes (4 bins wide) merge and the peak picker sees one partial
+// where there are three. Measured artifact over an ideal shift, sub on a
+// chord: N=2048 -> +2.3 dB, N=4096 -> +0.0 dB. It costs latency:
+//   -DPOGGED_PV_N=4096   (default) 84.5 ms, resolves low chords
+//   -DPOGGED_PV_N=2048             41.7 ms, blurs them
+// -DPOGGED_NO_VOCODER compiles this engine out entirely (MOD Dwarf).
 //
 // All buffers are member variables — zero stack allocation in process().
 
@@ -34,7 +40,7 @@ public:
 #ifdef POGGED_PV_N
     static constexpr int N = POGGED_PV_N;
 #else
-    static constexpr int N = 2048;
+    static constexpr int N = 4096;
 #endif
     static constexpr int HOP    = N / 4;        // 75 % overlap
     static constexpr int BINS   = N / 2 + 1;

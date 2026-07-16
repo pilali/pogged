@@ -1,6 +1,15 @@
 # TARGET: native (default) | moddwarf-new | modduox-new | rpi5
 TARGET ?= native
 
+# ── Pitch engine per target ────────────────────────────────────────────────
+# FOCUS picks between the granular engine (3 ms, +4.8 dB artifact on a chord)
+# and the streaming phase vocoder (85 ms, +0.0 dB — the ideal-shift floor).
+# The vocoder costs ~54x real time per voice on x86; the Dwarf's Cortex-A35
+# cannot carry that, so it is compiled out there rather than shipped as a
+# setting that xruns. Powerful targets keep the full choice.
+# NOT yet measured on real MOD hardware — the Duo X setting is a reasoned
+# guess (quad A53) and should be confirmed on the device.
+
 # ── Per-target defaults ────────────────────────────────────────────────────
 # override is needed so cross-compilation targets win over the environment CXX.
 ifeq ($(TARGET),rpi5)
@@ -21,14 +30,14 @@ else ifeq ($(TARGET),moddwarf-new)
     # Use ?= so those take precedence; fallbacks serve only for manual builds.
     CXX      ?= aarch64-modaudio-linux-gnu-g++
     CXXFLAGS ?= -std=c++17 -O3 -ffast-math \
-                -mcpu=cortex-a35 \
+                -mcpu=cortex-a35 -DPOGGED_NO_VOCODER \
                 -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter
 
 else ifeq ($(TARGET),modduox-new)
     # MOD Duo X — quad Cortex-A53 (ARMv8-A).
     CXX      ?= aarch64-modaudio-linux-gnu-g++
     CXXFLAGS ?= -std=c++17 -O3 -ffast-math \
-                -mcpu=cortex-a53 \
+                -mcpu=cortex-a53 -DPOGGED_PV_N=2048 \
                 -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter
 
 else  # native
@@ -70,6 +79,7 @@ clean:
 #   spread_test — POG3 SPREAD: R delayed 3x L, suboctaves excluded
 #   filter_test — LP/BP/HP modes + envelope sweep
 #   range_test  — guitar/baritone/bass sub sizing + the known chord ripple
+#   focus_test  — FOCUS engine switch: vocoder hits the ideal floor, no click
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -83,6 +93,7 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/spread_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/spread_test
 	$(CXX) $(AUDIT_FLAGS) tools/filter_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/filter_test
 	$(CXX) $(AUDIT_FLAGS) tools/range_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/range_test
+	$(CXX) $(AUDIT_FLAGS) tools/focus_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/focus_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -91,6 +102,7 @@ audit: $(HEADERS)
 	@$(AUDIT_DIR)/spread_test
 	@$(AUDIT_DIR)/filter_test
 	@$(AUDIT_DIR)/range_test
+	@$(AUDIT_DIR)/focus_test
 	@echo "AUDIT OK"
 
 .PHONY: audit

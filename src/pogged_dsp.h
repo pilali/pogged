@@ -52,6 +52,9 @@ typedef struct {
                                              Sizes the sub voices' grains and
                                              correlation scan. Trades sub
                                              latency for low-end stability.   */
+    float focus;         /* idx 28 [0/1]  engine: 0 = granular (POG-style, low
+                                            latency), 1 = phase vocoder (clean
+                                            on chords, ~85 ms). POG3's FOCUS.  */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

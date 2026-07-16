@@ -9,6 +9,9 @@
 // against.
 #include "pogged_dsp.h"
 #include "stream_shifter.hpp"
+#ifndef POGGED_NO_VOCODER
+#include "stream_vocoder.hpp"
+#endif
 #include "delay_line.hpp"
 #include "onset_detector.hpp"
 #include "biquad.hpp"
@@ -148,6 +151,29 @@ static constexpr float ALIGN_PERIODS = 0.5f;
 // a bass's -2 voice emits 7.7 Hz, which is a rumble, not a pitch — sizing
 // grains for it would smear everything else for nothing.
 static constexpr float GRAIN_MAX_MS  = 160.0f;
+
+// ── FOCUS: which pitch engine ────────────────────────────────────────────────
+// The POG3 has a FOCUS button that swaps the transposition algorithm, and its
+// manual notes the POG algorithm "features lower latency" than the alternative.
+// Ours is the same trade, measured:
+//
+//              artifact over an ideal shift (sub, chord)   latency
+//   granular             +4.8 dB                            3 ms
+//   vocoder              +0.0 dB                           85 ms
+//
+// The granular engine's aligner can only lock onto one periodicity, so a chord
+// — whose partials have incommensurable periods — makes its splices cancel
+// unevenly. The vocoder translates each spectral peak on its own and lands
+// exactly on the ideal-shift floor. It cannot do better; nothing can.
+//
+// Deviation from the POG3: its FOCUS acts on the +1/+2 voices only. Ours acts
+// on every voice, because the granular engine's weakness is on the SUB — a
+// faithful +1/+2-only FOCUS would never reach the voice that needs it.
+//
+// Switching engines crossfades over ~150 ms: they have different latencies (3
+// vs 85 ms), so a hard switch would jump the signal. Both engines run only
+// during the fade; at rest exactly one does.
+static constexpr float FOCUS_XFADE_MS = 150.0f;
 // Filter coefficients are refreshed on this stride while the sweep moves.
 // Per-sample would mean transcendentals per sample per channel; 16 samples is
 // a 3 kHz control rate at 48k, far above anything a filter sweep resolves.
@@ -162,6 +188,11 @@ struct PoggedDsp {
 
     StreamShifter sh[N_VOICES];
     bool          sh_live[N_VOICES] = {};   // false ⇒ needs reset before reuse
+#ifndef POGGED_NO_VOCODER
+    StreamVocoder pv[N_VOICES];
+    bool          pv_live[N_VOICES] = {};
+#endif
+    float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
 
     // Voices are panned before the mix, so the wet bus is stereo by the time
     // it reaches the filter — hence one filter per channel, same coefficients.
@@ -287,6 +318,17 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->sdl[V_UP1].init(spread_max);
     p->sdl[V_UP2].init(spread_max);
 
+#ifndef POGGED_NO_VOCODER
+    // Same ratios as the shifters: FOCUS swaps the engine, not the tuning.
+    const float pv_ratio[N_VOICES] = {
+        0.5f, 0.25f, FIFTH_RATIO, 2.0f, 4.0f, 2.0f, 4.0f
+    };
+    for (int v = 0; v < N_VOICES; ++v) {
+        p->pv[v].init(sample_rate);
+        p->pv[v].set_ratio(pv_ratio[v]);
+    }
+#endif
+
     p->det.init(sr);
     p->filt_det.init(sr);
     pogged_dsp_reset(p);
@@ -306,7 +348,12 @@ void pogged_dsp_reset(PoggedDsp* p)
         p->sh[v].reset();
         p->vfilt[v].reset();
         p->sh_live[v] = false;
+#ifndef POGGED_NO_VOCODER
+        p->pv[v].reset();
+        p->pv_live[v] = false;
+#endif
     }
+    p->g_focus = 0.0f;
     p->filter_l.reset();
     p->filter_r.reset();
     p->env.reset();
@@ -371,6 +418,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // Re-cut the sub grains only when the range actually changes: setup()
     // re-inits the taps when the grain length moves, which restarts the grains.
     // That is fine for a setup switch but must not happen every block.
+    const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
+    const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
+
     const float range_t = std::clamp(p_->range_mode, 0.0f, 2.0f);
     if (range_t != p->cached_range) {
         setup_subs(p, range_f_low(range_t), sr);
@@ -391,8 +441,14 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->det_phase -= std::floor(p->det_phase);
         const float lfo = std::sin(6.28318531f * p->det_phase);
         const float c   = (det_ct * lfo) / 1200.0f;      // instantaneous cents
-        p->sh[V_UP1D].set_ratio(2.0f * std::pow(2.0f,  c));
-        p->sh[V_UP2D].set_ratio(4.0f * std::pow(2.0f, -c));
+        const float r1 = 2.0f * std::pow(2.0f,  c);
+        const float r2 = 4.0f * std::pow(2.0f, -c);
+        p->sh[V_UP1D].set_ratio(r1);
+        p->sh[V_UP2D].set_ratio(r2);
+#ifndef POGGED_NO_VOCODER
+        p->pv[V_UP1D].set_ratio(r1);
+        p->pv[V_UP2D].set_ratio(r2);
+#endif
     }
 
     // Which shifters run this block. A voice is live while its target OR its
@@ -415,6 +471,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             p->vfilt[v].reset();
             p->sdl[v].reset();   // else SPREAD replays audio from before the
                                  // voice was silenced (no-op if uninitialised)
+#ifndef POGGED_NO_VOCODER
+            p->pv[v].reset();    // same: stale OLA tail from the last note
+#endif
         }
         p->sh_live[v] = act[v];
     }
@@ -482,6 +541,23 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->p_up1  += gc * (pup1_t  - p->p_up1);
         p->p_up2  += gc * (pup2_t  - p->p_up2);
 
+        // FOCUS crossfade. Both engines run ONLY while the fade is in flight;
+        // at rest (g_focus pinned at 0 or 1) exactly one does, so the idle cost
+        // is one engine. The vocoder's OLA needs ~N samples to fill, which the
+        // 150 ms fade covers — it ramps in from silence rather than clicking.
+        p->g_focus += focus_c * (focus_t - p->g_focus);
+        const float fx = p->g_focus;
+        auto voice_raw = [&](Voice v) noexcept -> float {
+#ifdef POGGED_NO_VOCODER
+            return p->sh[v].process(ring, mask, p->wpos);
+#else
+            float s = 0.0f;
+            if (fx < 0.9999f) s += (1.0f - fx) * p->sh[v].process(ring, mask, p->wpos);
+            if (fx > 1e-4f)   s += fx * p->pv[v].process(ring, mask, p->wpos);
+            return s;
+#endif
+        };
+
         // Each voice is tone-shaped by its fixed voicing filter, then panned
         // into the stereo wet bus (subs → LP, ups → HP; see pogged_dsp_new).
         // Detuned voices are filtered independently, then averaged with their
@@ -490,12 +566,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         float wet_l = 0.0f, wet_r = 0.0f;
         float gl, gr;
         if (act[V_SUB1]) {
-            const float v = p->g_sub1 * p->vfilt[V_SUB1].process(p->sh[V_SUB1].process(ring, mask, p->wpos));
+            const float v = p->g_sub1 * p->vfilt[V_SUB1].process(voice_raw(V_SUB1));
             pan_gains(p->p_sub1, gl, gr);
             wet_l += gl * v; wet_r += gr * v;
         }
         if (act[V_SUB2]) {
-            const float v = p->g_sub2 * p->vfilt[V_SUB2].process(p->sh[V_SUB2].process(ring, mask, p->wpos));
+            const float v = p->g_sub2 * p->vfilt[V_SUB2].process(voice_raw(V_SUB2));
             pan_gains(p->p_sub2, gl, gr);
             wet_l += gl * v; wet_r += gr * v;
         }
@@ -517,24 +593,24 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // +5th takes no detune: on both the POG2 and the POG3 the DETUNE
         // slider acts on the +1/+2 voices only.
         if (act[V_UP5]) {
-            const float v = p->g_up5 * p->vfilt[V_UP5].process(p->sh[V_UP5].process(ring, mask, p->wpos));
+            const float v = p->g_up5 * p->vfilt[V_UP5].process(voice_raw(V_UP5));
             spread_mix(V_UP5, v, p->p_up5);
         }
         if (act[V_UP1]) {
-            const float v = p->vfilt[V_UP1].process(p->sh[V_UP1].process(ring, mask, p->wpos));
+            const float v = p->vfilt[V_UP1].process(voice_raw(V_UP1));
             float o = v;
             if (act[V_UP1D]) {
-                const float vd = p->vfilt[V_UP1D].process(p->sh[V_UP1D].process(ring, mask, p->wpos));
+                const float vd = p->vfilt[V_UP1D].process(voice_raw(V_UP1D));
                 o = (1.0f - m) * v + m * vd;   // m ramps 0..0.5 (0.5 = 50/50)
             }
             o *= p->g_up1;
             spread_mix(V_UP1, o, p->p_up1);
         }
         if (act[V_UP2]) {
-            const float v = p->vfilt[V_UP2].process(p->sh[V_UP2].process(ring, mask, p->wpos));
+            const float v = p->vfilt[V_UP2].process(voice_raw(V_UP2));
             float o = v;
             if (act[V_UP2D]) {
-                const float vd = p->vfilt[V_UP2D].process(p->sh[V_UP2D].process(ring, mask, p->wpos));
+                const float vd = p->vfilt[V_UP2D].process(voice_raw(V_UP2D));
                 o = (1.0f - m) * v + m * vd;
             }
             o *= p->g_up2;
