@@ -335,13 +335,61 @@ un maigre gain d'accord) ni une marge ne corrigent ça — il faut du vrai **sui
 de partiels** (amplitude de pic par interpolation parabolique + appariement
 naissance/mort) ou plus de résolution sans la latence.
 
+---
+
+## 10. Le test à l'oreille casse le peak-picking — et pointe la vraie voie
+
+Rendu WAV d'un vrai passage joué (`tools/render_wav.cpp`, arpège fingerstyle +
+accord). Verdict de l'oreille : **râpeux, type bit-crusher, transposition
+infidèle**. Les métriques dB (ripple, arpège) ne l'avaient pas vu — elles
+mesurent la stabilité d'**amplitude**, pas la fidélité du **timbre**.
+
+**Diagnostic spectral** (note 110 Hz riche → sub 55 Hz, amplitude par
+harmonique) :
+
+| Harmonique | attendu 1/h | **peak-pick** | **overlap complet** |
+|---|---|---|---|
+| 1 (55 Hz) | 1.00 | 0.28 | 0.98 |
+| 2 (110) | 0.50 | 0.22 | 0.57 |
+| 3 (165) | 0.33 | **0.011** | 0.15 |
+| 4 (220) | 0.25 | 0.049 | 0.10 |
+| 5 (275) | 0.20 | **0.004** | 0.11 |
+| 7 (385) | 0.14 | **0.002** | 0.037 |
+
+Le peak-picking dans un banc log clairsemé **perce des trous** dans la série
+harmonique (impaires 30–70× trop faibles) → timbre détruit, son creux et dur.
+La reconstruction **overlap complète** garde toutes les harmoniques (juste un
+léger tilt aigu, corrigeable par EQ fixe).
+
+**La tension, précise :**
+- *peak-pick* → amplitude stable (arpège 0,3 dB) **mais timbre détruit** ;
+- *overlap* → **timbre fidèle** mais les canaux d'un même partiel **décorrèlent**
+  sous la fuite d'autres notes (les −6 dB d'arpège du Spike 1 naïf).
+
+**Le correctif connu** (→ Spike 3) : émettre **tous** les canaux (fidélité) mais
+**verrouiller la phase** de chaque canal sur le pic de sa région —
+θ_k = θ_pic + (arg z_k − arg z_pic). C'est exactement le *identity phase
+locking* de Laroche-Dolson que fait déjà `stream_vocoder.hpp`, mais appliqué en
+**continu** (par échantillon) au lieu de par trame FFT. Les canaux d'un partiel
+restent alors cohérents (pas de décorrélation) **et** toutes les harmoniques
+sont reconstruites (pas de trous).
+
 ### Spike 3 — plan
-- **Suivi de partiels** : interpolation parabolique de l'amplitude/fréquence de
-  pic (corrige le masquage faible-près-de-fort et le scalloping), appariement
-  inter-échantillon. Cible : ripple accord < +1 dB.
-- **Test d'arpège dense** exposant enfin le défaut du vocodeur (matériau à
-  partiels serrés qui re-partitionnent quand B arrive), pour faire
-  d'`arpeggio_test` un vrai discriminant plutôt qu'un plancher.
-- **Aplatissement du banc** (follow-up #1) : trim de gain par canal pour une
-  réponse unité plate, prérequis avant tout branchement dans `Focus`.
-- Puis seulement : câblage comme 3ᵉ option de `Focus` (TTL LV2 + JUCE + modgui).
+- **Overlap + verrouillage de phase continu** (identity locking à la
+  Laroche-Dolson) : le cœur du correctif ci-dessus. Cible : timbre fidèle (toutes
+  harmoniques présentes) **et** arpège/accord stables.
+- **Test de fidélité de timbre** (`filterbank_test`) : les 8 harmoniques d'une
+  note doivent ressortir, décroissantes, sans trou — la métrique qui manquait.
+- **EQ de voicing fixe** pour compenser le tilt aigu résiduel de l'overlap.
+- **Test d'arpège dense** exposant enfin le défaut du vocodeur.
+- **Aplatissement du banc** (follow-up #1), puis câblage dans `Focus`
+  (TTL LV2 + JUCE + modgui) — seulement une fois le timbre jugé fidèle à
+  l'oreille.
+
+> Note de lucidité : verrouiller la phase en continu, c'est réimplémenter le
+> cœur d'un phase vocoder **sans trame**. Légitime — c'est la façon d'avoir la
+> fidélité du vocodeur à la latence variable du banc — mais c'est du vrai
+> travail, pas un réglage. Si le Spike 3 n'atteint pas la fidélité à l'oreille,
+> la conclusion honnête sera peut-être que la transposition polyphonique fidèle
+> à basse latence est intrinsèquement le domaine du vocodeur (85 ms), et qu'il
+> vaut mieux attaquer SES faiblesses (latence, attaques) que réinventer.
