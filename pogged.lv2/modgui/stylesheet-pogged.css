@@ -70,7 +70,7 @@
     align-items: flex-end;
     bottom: 26px;
     display: flex;
-    gap: 14px;
+    gap: 11px;
     justify-content: center;
     left: 24px;
     position: absolute;
@@ -84,15 +84,23 @@
     margin: 0 4px;
 }
 
+/* Every fader is one fixed-width column, so the tracks are evenly spaced.
+   flex:0 0 + min-width:0 are both load-bearing: a flex item defaults to
+   min-width:auto and so cannot shrink below its own min-content width, which
+   for these nowrap labels means each column would otherwise be as wide as its
+   longest label ("RES" 26px vs "+1 OCT" 45px) and the pitch would wander.
+   Labels/values overflow this box, centred — the typography below is sized so
+   they never reach the neighbouring column. */
 .pogged-panel{{{cns}}} .pogged-fader {
     align-items: center;
     cursor: ns-resize;
     display: flex;
+    flex: 0 0 38px;
     flex-direction: column;
     height: 100%;
-    width: 44px;
+    min-width: 0;
+    width: 38px;
 }
-.pogged-panel{{{cns}}} .pogged-fader-small { width: 34px; }
 
 /* Track: dark slot; fill rises with the value; cap rides on top of it. */
 .pogged-panel{{{cns}}} .pogged-fader-track {
@@ -131,16 +139,16 @@
 
 .pogged-panel{{{cns}}} .pogged-fader-value {
     color: #6b6154;
-    font-size: 10px;
+    font-size: 9px;
     margin-top: 7px;
     min-height: 12px;
     white-space: nowrap;
 }
 .pogged-panel{{{cns}}} .pogged-fader-label {
     color: #2b2622;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 1px;
+    letter-spacing: 0.3px;
     margin-top: 1px;
     white-space: nowrap;
 }
