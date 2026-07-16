@@ -338,8 +338,11 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     const float pv_ratio[N_VOICES] = {
         0.5f, 0.25f, FIFTH_RATIO, 2.0f, 4.0f, 2.0f, 4.0f, 1.0f
     };
+    // Spread the voices' FFT bursts evenly across the hop so at most one lands
+    // in any given audio block, instead of all N_VOICES colliding every HOP
+    // samples. Same work, same sound — it is only *when* each voice computes.
     for (int v = 0; v < N_VOICES; ++v) {
-        p->pv[v].init(sample_rate);
+        p->pv[v].init(sample_rate, v * (StreamVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(pv_ratio[v]);
     }
 #endif

@@ -46,7 +46,12 @@ public:
     static constexpr int BINS   = N / 2 + 1;
     static constexpr int OUTBUF = N * 4;        // ring buffer ≥ 2 × max unread
 
-    void init(double sr) noexcept {
+    // hop_phase staggers WHEN this instance does its FFT burst, in samples
+    // [0, HOP). It changes nothing about the sound: each instance analyses the
+    // ring at its own frame times and its OLA stays self-consistent — only the
+    // moment of the work moves. See the note on _hop_cnt for why it matters.
+    void init(double sr, int hop_phase = 0) noexcept {
+        _hop_phase = ((hop_phase % HOP) + HOP) % HOP;
         _sr        = static_cast<float>(sr);
         _freq_pbin = _sr / N;
         _osamp     = static_cast<float>(N) / HOP;   // = 4
@@ -63,7 +68,7 @@ public:
         std::memset(_rot,       0, sizeof _rot);
         std::memset(_out_buf,   0, sizeof _out_buf);
         for (auto& c : _cx) c = {};
-        _hop_cnt   = 0;
+        _hop_cnt   = _hop_phase;   // NOT 0: a reset must not re-align the burst
         _out_write = 0;
         _out_read  = 0;
         _out_fill  = 0;
@@ -272,6 +277,15 @@ private:
     float _out_buf[OUTBUF]      = {};
     std::complex<float> _cx[N]  = {};
 
+    // Counts samples to the next frame. Its START VALUE is the whole point:
+    // a frame costs 2 FFTs of N, ~70x a plain sample, and it all lands in one
+    // audio block. With every instance starting at 0 they fire in lockstep, so
+    // N_VOICES frames pile into the SAME block while the next HOP-1 blocks do
+    // nothing. The average load is unchanged either way — the peak is not, and
+    // the peak is what has to fit in the block's deadline. Measured on a Pi 5,
+    // 8 voices, 128-sample blocks: worst-case block 128% of deadline (xruns)
+    // in lockstep, 25% staggered.
+    int    _hop_phase = 0;
     int    _hop_cnt   = 0;
     int    _out_write = 0;
     int    _out_read  = 0;

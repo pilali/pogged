@@ -81,6 +81,8 @@ clean:
 #   range_test  — guitar/baritone/bass sub sizing + the known chord ripple
 #   focus_test  — FOCUS engine switch: vocoder hits the ideal floor, no click
 #   dry_test    — input gain + the three DRY routing buttons
+#   stagger_test— the vocoder's staggered hop phase does not move a voice's
+#                 latency (the invariant that lets the peak load be spread)
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -96,6 +98,7 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/range_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/range_test
 	$(CXX) $(AUDIT_FLAGS) tools/focus_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/focus_test
 	$(CXX) $(AUDIT_FLAGS) tools/dry_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/dry_test
+	$(CXX) $(AUDIT_FLAGS) tools/stagger_test.cpp -o $(AUDIT_DIR)/stagger_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -106,6 +109,7 @@ audit: $(HEADERS)
 	@$(AUDIT_DIR)/range_test
 	@$(AUDIT_DIR)/focus_test
 	@$(AUDIT_DIR)/dry_test
+	@$(AUDIT_DIR)/stagger_test
 	@echo "AUDIT OK"
 
 .PHONY: audit
