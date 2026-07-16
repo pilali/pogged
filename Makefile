@@ -54,7 +54,8 @@ BINARY  = $(BUNDLE)/pogged.so
 
 SOURCES = src/plugin.cpp src/glibc_compat.cpp src/pogged_dsp.cpp
 HEADERS = src/pogged_dsp.h src/stream_shifter.hpp src/onset_detector.hpp \
-          src/biquad.hpp src/envelope.hpp src/freeze_loop.hpp
+          src/biquad.hpp src/envelope.hpp src/freeze_loop.hpp \
+          src/stream_filterbank.hpp
 
 all: $(BINARY)
 
@@ -87,6 +88,10 @@ clean:
 #                 dry, keeps warp=0 bit-identical, and grows the lag budget
 #   freeze_test — POG3 FREEZE+GLISS: the octaves hold, the dry stays live over
 #                 them, and the pedal's position sets the glide rate
+#   filterbank_test — experimental spike: constant-Q filter bank shifts pitch
+#                 and holds a chord's sub steadier than the granular splices
+#   arpeggio_test   — experimental spike (§1.1): a new attack must not move the
+#                 resonance of notes already ringing (filter bank vs vocoder)
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -105,6 +110,8 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/stagger_test.cpp -o $(AUDIT_DIR)/stagger_test
 	$(CXX) $(AUDIT_FLAGS) tools/warp_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/warp_test
 	$(CXX) $(AUDIT_FLAGS) tools/freeze_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/freeze_test
+	$(CXX) $(AUDIT_FLAGS) tools/filterbank_test.cpp -o $(AUDIT_DIR)/filterbank_test
+	$(CXX) $(AUDIT_FLAGS) tools/arpeggio_test.cpp -o $(AUDIT_DIR)/arpeggio_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -118,6 +125,8 @@ audit: $(HEADERS)
 	@$(AUDIT_DIR)/stagger_test
 	@$(AUDIT_DIR)/warp_test
 	@$(AUDIT_DIR)/freeze_test
+	@$(AUDIT_DIR)/filterbank_test
+	@$(AUDIT_DIR)/arpeggio_test
 	@echo "AUDIT OK"
 
 .PHONY: audit

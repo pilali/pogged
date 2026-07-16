@@ -237,3 +237,67 @@ Ce qu'on **garde** de la piste initiale : la **détection + réinjection des
 transitoires** (le plus gros gain perceptif, et l'`OnsetDetector` existe déjà),
 et l'idée de **latence dépendante de la fréquence**, ré-exprimée proprement
 en §1.2.
+
+---
+
+## 8. Résultats du Spike 1 (banc de filtres hétérodyne constant-Q)
+
+Implémenté dans `src/stream_filterbank.hpp`, mesuré par `tools/filterbank_test.cpp`
+et `tools/arpeggio_test.cpp` (tous deux branchés dans `make audit`). Banc
+constant-Q, 45 Hz–9 kHz, 6 canaux/octave, Q=6 (~46 canaux) ; par canal :
+démodulation hétérodyne → baseband → passe-bas 1 pôle complexe → fréquence
+instantanée → resynthèse à `ratio×`.
+
+**Ce qui marche.** La transposition est juste et propre : un sinus à 220 Hz
+ressort à 110 / 440 Hz, dominant, sans fuite mesurable à la fréquence d'entrée
+ni à l'octave voisine. La latence est bien dépendante de la fréquence (grave
+~40 ms, médium ~2 ms, aigu sub-ms), comme visé au §1.2.
+
+**Le piège trouvé — et c'est le vrai apport du spike.** La resynthèse *naïve*
+(sommer **tous** les canaux qui se recouvrent) échoue lourdement :
+
+| Métrique | Overlap naïf | Peak-pick | Granulaire | Vocodeur (plancher) |
+|---|---|---|---|---|
+| Ripple sub sur accord (150 ms) | +7,3 dB | **+3,4 dB** | +4,5 dB | +0,0 dB |
+| Attaque perturbe note tenue (§1.1) | 6,1 dB | **1,2 dB** | — | 0,2 dB* |
+
+Cause : un partiel est porté par ~CPO/2 canaux à la fois ; l'estimation de
+fréquence par canal est **non linéaire** (`arg` d'un produit), donc la fuite
+d'une *autre* note corrompt différemment chaque canal, qui **décorrèlent** et
+s'annulent en sommant. Résultat contre-intuitif : une nouvelle attaque *baissait*
+la note tenue de 6 dB — l'exact opposé du §1.1. Mon hypothèse « A vit dans ses
+canaux, B dans d'autres » était **trop naïve pour un banc à recouvrement**.
+
+**Le correctif appliqué : un oscillateur par partiel.** N'émettre que les canaux
+maximum-locaux (|zk| ≥ voisins) effondre chaque partiel sur son canal dominant,
+dont l'estimation de fréquence est peu perturbée par les notes lointaines. Gain
+net : ripple divisé par ~2 et **il bat désormais le granulaire** (3,9 vs 5,0 dB) ;
+perturbation d'arpège divisée par ~5 (6,1 → 1,2 dB).
+
+**Ce qui reste (→ Spike 2).** Le banc peak-pické **ne rejoint pas encore le
+plancher du vocodeur**. Le résidu est le **flicker** : un partiel saute entre
+deux canaux max-locaux adjacents quand son amplitude oscille, chaque saut étant
+un petit pas d'amplitude/phase. Il faut du **suivi de partiels** (hystérésis /
+continuité inter-trame — Puckette, sinusoidal modeling) pour le tuer.
+
+\* *Caveat honnête, gardé visible dans le test :* sur un accord de **deux** tons
+propres, la re-partition du vocodeur est stable, donc il score bien ici — cette
+métrique est un plancher pour le banc, **pas encore le discriminant décisif**.
+Reproduire le vrai défaut « la résonance des notes tenues bouge » exige un
+matériau plus dense (beaucoup de partiels proches qui re-partitionnent quand B
+arrive). À construire au Spike 2.
+
+**Verdict.** Architecture prometteuse et alignée avec les trois observations :
+transposition propre, latence dépendante de la fréquence, **bat le granulaire
+sur accord**, structure per-canal. Mais atteindre la propreté du vocodeur
+demande le suivi de partiels — c'est le cœur du Spike 2, pas un réglage.
+
+### Spike 2 — plan
+- **Suivi de partiels** sur le banc : hystérésis de sélection des pics + appariement
+  inter-échantillon, pour supprimer le flicker (cible : ripple accord < +1 dB,
+  arpège < 0,3 dB).
+- **Test d'arpège dense** exposant enfin le défaut du vocodeur (matériau à
+  partiels serrés), pour faire d'`arpeggio_test` un vrai discriminant.
+- **Aplatissement du banc** (follow-up #1) : trim de gain par canal pour une
+  réponse unité plate, prérequis avant tout branchement dans `Focus`.
+- Puis seulement : câblage comme 3ᵉ option de `Focus` (TTL LV2 + JUCE + modgui).
