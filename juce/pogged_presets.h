@@ -100,6 +100,36 @@ static const PresetParam kPreset5[] = {
     { "up2_level", 0.0f },
 };
 
+// String Machine
+static const PresetParam kPreset6[] = {
+    { "attack_ms", 350.0f },
+    { "attack_sens", 0.45f },
+    { "detune_cents", 14.0f },
+    { "dry_level", 0.0f },
+    { "lp_cutoff", 5000.0f },
+    { "lp_q", 0.707f },
+    { "out_level", 1.0f },
+    { "sub1_level", 0.5f },
+    { "sub2_level", 0.0f },
+    { "up1_level", 1.0f },
+    { "up2_level", 0.5f },
+};
+
+// Bass Synth
+static const PresetParam kPreset7[] = {
+    { "attack_ms", 0.0f },
+    { "attack_sens", 0.3f },
+    { "detune_cents", 0.0f },
+    { "dry_level", 0.4f },
+    { "lp_cutoff", 1400.0f },
+    { "lp_q", 2.2f },
+    { "out_level", 1.0f },
+    { "sub1_level", 1.2f },
+    { "sub2_level", 0.4f },
+    { "up1_level", 0.3f },
+    { "up2_level", 0.0f },
+};
+
 static const Preset kPresets[] = {
     { "Classic POG", kPreset0, (int) (sizeof(kPreset0) / sizeof(kPreset0[0])) },
     { "Fat Organ", kPreset1, (int) (sizeof(kPreset1) / sizeof(kPreset1[0])) },
@@ -107,8 +137,10 @@ static const Preset kPresets[] = {
     { "Sub Bass", kPreset3, (int) (sizeof(kPreset3) / sizeof(kPreset3[0])) },
     { "Slow Cathedral", kPreset4, (int) (sizeof(kPreset4) / sizeof(kPreset4[0])) },
     { "Resonant Synth", kPreset5, (int) (sizeof(kPreset5) / sizeof(kPreset5[0])) },
+    { "String Machine", kPreset6, (int) (sizeof(kPreset6) / sizeof(kPreset6[0])) },
+    { "Bass Synth", kPreset7, (int) (sizeof(kPreset7) / sizeof(kPreset7[0])) },
 };
 
-static constexpr int kNumPresets = 6;
+static constexpr int kNumPresets = 8;
 
 } // namespace pogged

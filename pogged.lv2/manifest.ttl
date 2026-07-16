@@ -37,4 +37,14 @@
     a pset:Preset ;
     rdfs:seeAlso <Resonant_Synth.ttl> .
 
+<String_Machine.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <String_Machine.ttl> .
+
+<Bass_Synth.ttl>
+    lv2:appliesTo <https://github.com/pilali/pogged> ;
+    a pset:Preset ;
+    rdfs:seeAlso <Bass_Synth.ttl> .
+
 <https://github.com/pilali/pogged> rdfs:seeAlso <modgui.ttl> .

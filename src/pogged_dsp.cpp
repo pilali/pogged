@@ -81,17 +81,25 @@ struct PoggedDsp {
     bool          sh_live[N_VOICES] = {};   // false ⇒ needs reset before reuse
 
     Biquad        filter;
+    Biquad        vfilt[N_VOICES];   // fixed per-voice tone shaping (voicing)
     Envelope      env;
     OnsetDetector det;
 
     // Smoothed gains (per-sample one-pole, ~30 ms)
     float g_dry = 1.0f, g_sub1 = 0.0f, g_sub2 = 0.0f;
     float g_up1 = 0.0f, g_up2 = 0.0f, g_out = 1.0f;
+    // Detune-mix coefficient, ramped 0 → 0.5 so enabling/disabling detune
+    // crossfades the (phase-independent) detuned voice in instead of hard-
+    // switching to the 50/50 average, which was an audible click.
+    float g_detmix = 0.0f;
+    // LP-engage crossfade, ramped 0 (bypassed) → 1 (fully filtered) so the
+    // filter fades in/out instead of engaging from zero state on a live
+    // signal, which was an audible transient when sweeping cutoff off 20 kHz.
+    float g_filtmix = 0.0f;
 
     // Filter smoothing/caching (Megalo pattern)
     float smooth_cutoff = -1.0f, smooth_q = 0.707f;
     float cached_cutoff = -1.0f, cached_q = -1.0f;
-    bool  lp_bypassed   = true;
 
     // Attack/swell state
     float env_level   = 0.0f;
@@ -128,6 +136,22 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->sh[V_UP1D].setup(2.0f,  grain_up,  align);
     p->sh[V_UP2D].setup(4.0f,  grain_up,  align);
 
+    // Fixed per-voice tone shaping — voices the octaves toward the POG2's
+    // character rather than passing raw transposed grains:
+    //   subs → gentle LP: rounds the low octaves and tames the granular buzz
+    //          (a real POG sub is smooth, not gritty);
+    //   ups  → gentle HP: removes the low-frequency amplitude modulation that
+    //          up-transposition leaves at the grain-splice rate, which a real
+    //          POG octave-up does not have.
+    // Q = 0.707 (Butterworth, no resonant colouration). Not user-exposed.
+    const float ny = std::min(sr * 0.499f, 20000.0f);
+    p->vfilt[V_SUB1].setup(Biquad::LP, std::min(3500.0f, ny), 0.707f, sr);
+    p->vfilt[V_SUB2].setup(Biquad::LP, std::min(2000.0f, ny), 0.707f, sr);
+    p->vfilt[V_UP1 ].setup(Biquad::HP, 140.0f, 0.707f, sr);
+    p->vfilt[V_UP2 ].setup(Biquad::HP, 220.0f, 0.707f, sr);
+    p->vfilt[V_UP1D].setup(Biquad::HP, 140.0f, 0.707f, sr);
+    p->vfilt[V_UP2D].setup(Biquad::HP, 220.0f, 0.707f, sr);
+
     p->det.init(sr);
     pogged_dsp_reset(p);
     return p;
@@ -144,6 +168,7 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->wpos = p->ring.size();     // keep absolute read positions non-negative
     for (int v = 0; v < N_VOICES; ++v) {
         p->sh[v].reset();
+        p->vfilt[v].reset();
         p->sh_live[v] = false;
     }
     p->filter.reset();
@@ -152,10 +177,11 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->smooth_cutoff = -1.0f;
     p->smooth_q      = 0.707f;
     p->cached_cutoff = p->cached_q = -1.0f;
-    p->lp_bypassed   = true;
     p->env_level     = 0.0f;
     p->pending_trig  = 0;
     p->sil_count     = 0;
+    p->g_detmix      = 0.0f;
+    p->g_filtmix     = 0.0f;
 }
 
 // ── Processing ───────────────────────────────────────────────────────────────
@@ -198,11 +224,16 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         sub2_t > 1e-4f || p->g_sub2 > 1e-4f,
         up1_t  > 1e-4f || p->g_up1  > 1e-4f,
         up2_t  > 1e-4f || p->g_up2  > 1e-4f,
-        detune_on && (up1_t > 1e-4f || p->g_up1 > 1e-4f),
-        detune_on && (up2_t > 1e-4f || p->g_up2 > 1e-4f),
+        // Detuned voices stay alive while the detune-mix is still ramping
+        // down, so their contribution can fade out continuously.
+        (detune_on || p->g_detmix > 1e-4f) && (up1_t > 1e-4f || p->g_up1 > 1e-4f),
+        (detune_on || p->g_detmix > 1e-4f) && (up2_t > 1e-4f || p->g_up2 > 1e-4f),
     };
     for (int v = 0; v < N_VOICES; ++v) {
-        if (act[v] && !p->sh_live[v]) p->sh[v].reset();   // fresh grains
+        if (act[v] && !p->sh_live[v]) {                    // fresh grains
+            p->sh[v].reset();
+            p->vfilt[v].reset();
+        }
         p->sh_live[v] = act[v];
     }
 
@@ -224,6 +255,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         if (std::abs(p->smooth_q - q) < 0.001f * q)
             p->smooth_q = q;
     }
+    // Bypass ≥19 kHz. The filter coefficients are refreshed while active; the
+    // filter is NOT reset on entering bypass — the crossfade below fades its
+    // contribution out, and resetting mid-fade would itself click.
     const bool bypass = p->smooth_cutoff >= 19000.0f;
     if (!bypass &&
         (p->smooth_cutoff != p->cached_cutoff || p->smooth_q != p->cached_q)) {
@@ -231,8 +265,6 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->cached_cutoff = p->smooth_cutoff;
         p->cached_q      = p->smooth_q;
     }
-    if (bypass && !p->lp_bypassed) p->filter.reset();
-    p->lp_bypassed = bypass;
 
     // Per-sample gain smoothing coefficient (~30 ms)
     const float gc = 1.0f - std::exp(-1.0f / (0.030f * sr));
@@ -253,23 +285,34 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->g_up1  += gc * (up1_t  - p->g_up1);
         p->g_up2  += gc * (up2_t  - p->g_up2);
         p->g_out  += gc * (out_t  - p->g_out);
+        p->g_detmix += gc * ((detune_on ? 0.5f : 0.0f) - p->g_detmix);
+        const float m = p->g_detmix;
 
+        // Each voice is tone-shaped by its fixed voicing filter before the
+        // level mix (subs → LP, ups → HP; see pogged_dsp_new). Detuned voices
+        // are filtered independently, then averaged with their main voice.
         float wet = 0.0f;
         if (act[V_SUB1])
-            wet += p->g_sub1 * p->sh[V_SUB1].process(ring, mask, p->wpos);
+            wet += p->g_sub1 * p->vfilt[V_SUB1].process(p->sh[V_SUB1].process(ring, mask, p->wpos));
         if (act[V_SUB2])
-            wet += p->g_sub2 * p->sh[V_SUB2].process(ring, mask, p->wpos);
+            wet += p->g_sub2 * p->vfilt[V_SUB2].process(p->sh[V_SUB2].process(ring, mask, p->wpos));
         if (act[V_UP1]) {
-            float v = p->sh[V_UP1].process(ring, mask, p->wpos);
-            if (act[V_UP1D])
-                v = 0.5f * (v + p->sh[V_UP1D].process(ring, mask, p->wpos));
-            wet += p->g_up1 * v;
+            const float v = p->vfilt[V_UP1].process(p->sh[V_UP1].process(ring, mask, p->wpos));
+            float o = v;
+            if (act[V_UP1D]) {
+                const float vd = p->vfilt[V_UP1D].process(p->sh[V_UP1D].process(ring, mask, p->wpos));
+                o = (1.0f - m) * v + m * vd;   // m ramps 0..0.5 (0.5 = 50/50)
+            }
+            wet += p->g_up1 * o;
         }
         if (act[V_UP2]) {
-            float v = p->sh[V_UP2].process(ring, mask, p->wpos);
-            if (act[V_UP2D])
-                v = 0.5f * (v + p->sh[V_UP2D].process(ring, mask, p->wpos));
-            wet += p->g_up2 * v;
+            const float v = p->vfilt[V_UP2].process(p->sh[V_UP2].process(ring, mask, p->wpos));
+            float o = v;
+            if (act[V_UP2D]) {
+                const float vd = p->vfilt[V_UP2D].process(p->sh[V_UP2D].process(ring, mask, p->wpos));
+                o = (1.0f - m) * v + m * vd;
+            }
+            wet += p->g_up2 * o;
         }
 
         // Attack/swell. The detector always runs so its RMS state is warm
@@ -304,7 +347,14 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             p->env_level = 1.0f;
         }
 
-        if (!bypass) wet = p->filter.process(wet);
+        // Crossfade the LP in/out (g_filtmix ramps 0..1). Feed the filter
+        // whenever the mix is non-trivial so its state stays coherent through
+        // the fade; at steady bypass (mix 0) it is skipped entirely.
+        p->g_filtmix += gc * ((bypass ? 0.0f : 1.0f) - p->g_filtmix);
+        if (p->g_filtmix > 1e-4f) {
+            const float f = p->filter.process(wet);
+            wet += p->g_filtmix * (f - wet);
+        }
 
         out[i] = soft_clip((wet + p->g_dry * x) * p->g_out);
     }

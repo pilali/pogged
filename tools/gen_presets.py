@@ -58,6 +58,16 @@ PRESETS = [
       dry_level=0.0, sub1_level=1.0, sub2_level=0.0, up1_level=1.0, up2_level=0.0,
       detune_cents=0.0, attack_ms=0.0, attack_sens=0.35,
       lp_cutoff=900, lp_q=5.0, out_level=1.0),
+
+    P("String Machine",
+      dry_level=0.0, sub1_level=0.5, sub2_level=0.0, up1_level=1.0, up2_level=0.5,
+      detune_cents=14.0, attack_ms=350, attack_sens=0.45,
+      lp_cutoff=5000, lp_q=0.707, out_level=1.0),
+
+    P("Bass Synth",
+      dry_level=0.4, sub1_level=1.2, sub2_level=0.4, up1_level=0.3, up2_level=0.0,
+      detune_cents=0.0, attack_ms=0.0, attack_sens=0.3,
+      lp_cutoff=1400, lp_q=2.2, out_level=1.0),
 ]
 
 # Symbols emitted in each .ttl preset (alphabetical, LV2 convention).

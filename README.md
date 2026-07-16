@@ -32,14 +32,34 @@ components).
 | Resonance | Q 0.5–8 | Filter resonance. |
 | Output | 0–200 % | Master output gain into a soft clipper. |
 
+## Presets
+
+Eight factory presets, mirroring the POG2's eight slots. They are generated
+from a single source (`tools/gen_presets.py`) into both the LV2 preset TTLs and
+the JUCE header, so a program sounds identical in MOD, a DAW, and standalone.
+
+| Preset | Character |
+|---|---|
+| Classic POG | Dry + one octave down + one up, the canonical setting. |
+| Fat Organ | All voices, detuned, filtered — drawbar organ. |
+| 12-String | Dry + a detuned octave up, shimmer only. |
+| Sub Bass | Both sub octaves under the dry, filtered low. |
+| Slow Cathedral | Up voices with a long attack swell — bowed pad. |
+| Resonant Synth | No dry, resonant filter — synth lead. |
+| String Machine | Wide detune + medium swell, no dry — ensemble strings. |
+| Bass Synth | Subs forward with a resonant filter — synth bass. |
+
 ## How it works
 
 No pitch tracking. The live input is written to a ring buffer, and each octave
 voice is a 2-tap granular reader running at a fixed ratio (0.5 / 0.25 / 2 / 4)
 behind the write head, with correlation-aligned (SOLA-style) grain splicing so
-the transposed grains stay phase-coherent on any polyphonic material. The dry
-path is never delayed. See `docs/lv2-to-multiplatform.md` for the shared-core
-architecture.
+the transposed grains stay phase-coherent on any polyphonic material. Each
+voice then passes a fixed voicing filter — subs are gently low-passed to round
+them, ups gently high-passed to strip the splice-rate modulation — which is
+what pulls the octaves toward the POG2's character instead of sounding like raw
+transposed grains. The dry path is never delayed. See
+`docs/lv2-to-multiplatform.md` for the shared-core architecture.
 
 ## Development
 
