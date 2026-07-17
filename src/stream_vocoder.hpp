@@ -45,6 +45,7 @@ public:
     static constexpr int N = N_;
     static constexpr int HOP    = N / 4;        // 75 % overlap
     static constexpr int BINS   = N / 2 + 1;
+    static constexpr int M      = N / 2;        // real-FFT complex size (§19)
     static constexpr int OUTBUF = N * 4;        // ring buffer ≥ 2 × max unread
 
     // hop_phase staggers WHEN this instance does its FFT burst, in samples
@@ -58,6 +59,13 @@ public:
         _osamp     = static_cast<float>(N) / HOP;   // = 4
         for (int i = 0; i < N; i++)
             _win[i] = 0.5f * (1.0f - std::cos(2.0f * float(M_PI) * i / (N - 1)));
+        // Twiddle tables (double-precision trig at init, no cost in process).
+        for (int j = 0; j < M / 2; j++)
+            _tw[j] = std::complex<float>((float)std::cos(2.0 * M_PI * j / M),
+                                         (float)-std::sin(2.0 * M_PI * j / M));
+        for (int k = 0; k <= M; k++)
+            _tu[k] = std::complex<float>((float)std::cos(2.0 * M_PI * k / N),
+                                         (float)-std::sin(2.0 * M_PI * k / N));
         reset();
     }
 
@@ -114,11 +122,27 @@ private:
         // The newest N samples behind the write head. Megalo interpolated a
         // fractional loop position here; streaming needs none — the frame is
         // read at normal speed and lands on integer samples.
+        //
+        // REAL-input FFT (§19): the frame is real, so the transform runs on
+        // M = N/2 complex points (even samples in the real part, odd in the
+        // imaginary) and the true half-spectrum X[0..M] is recovered by the
+        // standard unpack below — half the butterfly work of the old
+        // full-size complex FFT with a zeroed imaginary half.
         const uint64_t start = wpos - (uint64_t)N;
-        for (int i = 0; i < N; i++)
-            _cx[i] = { ring[(start + (uint64_t)i) & mask] * _win[i], 0.0f };
+        for (int i = 0; i < M; i++)
+            _work[i] = { ring[(start + (uint64_t)(2 * i))     & mask] * _win[2 * i],
+                         ring[(start + (uint64_t)(2 * i + 1)) & mask] * _win[2 * i + 1] };
+        _fft(_work, false);
 
-        _fft(false);
+        // Unpack Z = FFT_M(even + i·odd) into the real signal's half-spectrum
+        // _cx[0..BINS): X[k] = (Z[k]+conj(Z[M-k]))/2 − i·tu[k]·(Z[k]−conj(Z[M-k]))/2
+        // with tu[k] = e^{-i2πk/N} and Z[M] ≡ Z[0].
+        for (int k = 0; k <= M; k++) {
+            const std::complex<float> zk  = _work[k & (M - 1)];
+            const std::complex<float> zmk = std::conj(_work[(M - k) & (M - 1)]);
+            _cx[k] = 0.5f * (zk + zmk)
+                   - 0.5f * (std::complex<float>(0.0f, 1.0f) * _tu[k]) * (zk - zmk);
+        }
 
         // ── Analysis: true instantaneous frequency per bin ─────────────────
         const float expct = 2.0f * float(M_PI) * HOP / N;
@@ -245,11 +269,16 @@ private:
             }
         }
 
-        // Hermitian symmetry for real output
-        for (int k = BINS; k < N; k++)
-            _cx[k] = std::conj(_cx[N - k]);
-
-        _fft(true);
+        // Inverse real FFT: pack the Hermitian half-spectrum back into M
+        // complex points (the exact inverse of the unpack above), IFFT_M,
+        // and the time samples come out interleaved re/im = even/odd.
+        for (int k = 0; k < M; k++) {
+            const std::complex<float> a = _cx[k] + std::conj(_cx[M - k]);
+            const std::complex<float> b = _cx[k] - std::conj(_cx[M - k]);
+            _work[k] = 0.5f * (a + (std::complex<float>(0.0f, 1.0f)
+                                    * std::conj(_tu[k])) * b);
+        }
+        _fft(_work, true);
 
         // ── Overlap-add ───────────────────────────────────────────────────
         // Hann analysis+synthesis normalization: the sum of w² over the
@@ -257,40 +286,50 @@ private:
         // so dividing by it yields unity passthrough. (The previous factor was
         // wrong by ~N/2, making the pitch voices ~1340× too quiet / inaudible.)
         const float scale = 1.0f / (0.375f * _osamp);
-        for (int i = 0; i < N; i++) {
-            int idx = (_out_write + i) % OUTBUF;
-            _out_buf[idx] += _cx[i].real() * _win[i] * scale;
+        for (int i = 0; i < M; i++) {
+            const float e = _work[i].real() * _win[2 * i]     * scale;
+            const float o = _work[i].imag() * _win[2 * i + 1] * scale;
+            int idx = (_out_write + 2 * i) % OUTBUF;
+            _out_buf[idx] += e;
+            idx = (_out_write + 2 * i + 1) % OUTBUF;
+            _out_buf[idx] += o;
         }
         _out_write = (_out_write + HOP) % OUTBUF;
         _out_fill  = std::min(_out_fill + HOP, OUTBUF);
     }
 
-    // ── Radix-2 DIT Cooley-Tukey FFT (in-place, operates on _cx) ─────────
-    void _fft(bool inverse) noexcept {
+    // ── Radix-2 DIT Cooley-Tukey FFT, size M, table-driven ────────────────
+    // Twiddles come from the precomputed _tw table instead of the running
+    // product w *= wlen the old code used: the table kills both the serial
+    // dependency in the inner loop (the vectorizer's enemy) and the rounding
+    // drift the product accumulated over long stages. Inverse via conjugate
+    // twiddles + 1/M.
+    void _fft(std::complex<float>* a, bool inverse) noexcept {
         // Bit-reversal permutation
-        for (int i = 1, j = 0; i < N; i++) {
-            int bit = N >> 1;
+        for (int i = 1, j = 0; i < M; i++) {
+            int bit = M >> 1;
             for (; j & bit; bit >>= 1) j ^= bit;
             j ^= bit;
-            if (i < j) std::swap(_cx[i], _cx[j]);
+            if (i < j) std::swap(a[i], a[j]);
         }
-        // Butterfly stages
-        for (int len = 2; len <= N; len <<= 1) {
-            float ang = float(M_PI) * (inverse ? 1.0f : -1.0f) * 2.0f / len;
-            std::complex<float> wlen(std::cos(ang), std::sin(ang));
-            for (int i = 0; i < N; i += len) {
-                std::complex<float> w(1.0f, 0.0f);
+        // Butterfly stages; _tw[j·step] = e^{-2πi·j/len} with step = M/len.
+        for (int len = 2; len <= M; len <<= 1) {
+            const int step = M / len;
+            for (int i = 0; i < M; i += len) {
                 for (int j = 0; j < len / 2; j++) {
-                    auto u = _cx[i + j];
-                    auto v = _cx[i + j + len / 2] * w;
-                    _cx[i + j]           = u + v;
-                    _cx[i + j + len / 2] = u - v;
-                    w *= wlen;
+                    std::complex<float> w = _tw[j * step];
+                    if (inverse) w = std::conj(w);
+                    const auto u = a[i + j];
+                    const auto v = a[i + j + len / 2] * w;
+                    a[i + j]           = u + v;
+                    a[i + j + len / 2] = u - v;
                 }
             }
         }
-        if (inverse)
-            for (int i = 0; i < N; i++) _cx[i] /= float(N);
+        if (inverse) {
+            const float s = 1.0f / (float)M;
+            for (int i = 0; i < M; i++) a[i] *= s;
+        }
     }
 
     // ── State ──────────────────────────────────────────────────────────────
@@ -310,7 +349,13 @@ private:
     int   _peaks[BINS]          = {};   // per-frame peak list
     int   _bounds[BINS + 1]     = {};   // per-frame region boundaries
     float _out_buf[OUTBUF]      = {};
-    std::complex<float> _cx[N]  = {};
+    // Real-FFT machinery (§19): half-size complex work buffer, spectrum
+    // (BINS, not N — the Hermitian mirror never exists in memory any more),
+    // and the two twiddle tables filled in init().
+    std::complex<float> _cx[BINS]    = {};   // half-spectrum, analysis+synthesis
+    std::complex<float> _work[N / 2] = {};   // M-point FFT buffer
+    std::complex<float> _tw[N / 4]   = {};   // FFT twiddles e^{-2πi j/M}
+    std::complex<float> _tu[N / 2 + 1] = {}; // (un)pack twiddles e^{-2πi k/N}
 
     // Counts samples to the next frame. Its START VALUE is the whole point:
     // a frame costs 2 FFTs of N, ~70x a plain sample, and it all lands in one
