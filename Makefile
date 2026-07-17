@@ -101,9 +101,9 @@ clean:
 #   polyswell_test  — POG3 polyphonic ATTACK (§14): a new attack swells in on
 #                 its own bins while notes already ringing keep their sustain
 #                 (vocoder asserted; granular reported, it stays POG2-global)
-#   stability_test  — shift stability on close partials (§15): the multi-res
-#                 crossover is input-referred (XOVER x ratio on up voices) so
-#                 the short window never renders partials it cannot resolve
+#   stability_test  — shift stability on close partials (§15/§22): merged
+#                 pairs are resolved from the frame HISTORY (Prony) and each
+#                 partial rendered on its own kernel — ideal-floor asserted
 #   shimmer_test    — shimmer on a realistic chord (§16): colliding harmonics
 #                 between two notes must not warble (excess AM vs the ideal
 #                 shift bounded; the 8192 long window is what buys this)

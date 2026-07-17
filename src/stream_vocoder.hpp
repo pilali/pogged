@@ -58,6 +58,19 @@ public:
     // wobble on merged pairs, which is the §16 shimmer engine. EB keeps the
     // baseline at N/4 seconds' worth of hops for every overlap factor.
     static constexpr int EB     = (OS_ > 4) ? OS_ / 4 : 1;
+    // §22 (Spike 7) — parametric resynthesis of merged regions. Any bin of a
+    // region carries, across frames, the sum of the region's partials as
+    // complex exponentials: an order-2 Prony fit over the last PK frames
+    // recovers TWO frequencies beyond the window's resolution (estimation
+    // history is not signal latency). A region diagnosed bi-tonal is then
+    // resynthesised as two analytic Hann kernels, each at its own target
+    // frequency with its own phasor — no wobble, no mistuning, and even the
+    // pair's output spacing comes out ×ratio (rigid translation kept the
+    // input spacing). Falls back to rigid translation whenever the fit is
+    // not trustworthy.
+    static constexpr int PK  = 8;    // Prony history, frames
+    static constexpr int KW  = 4;    // synthesis kernel half-width, bins
+    static constexpr int KOS = 32;   // kernel table oversampling
     static constexpr int OUTBUF = N * 4;        // ring buffer ≥ 2 × max unread
 
     // hop_phase staggers WHEN this instance does its FFT burst, in samples
@@ -71,6 +84,20 @@ public:
         _osamp     = static_cast<float>(N) / HOP;   // = OS_
         for (int i = 0; i < N; i++)
             _win[i] = 0.5f * (1.0f - std::cos(2.0f * float(M_PI) * i / (N - 1)));
+        // §22 kernel table: the de-alternated (centre-referenced) transform
+        // of the Hann window, analytic — W(x) = D(x)/2 + [D(x-1)+D(x+1)]/4,
+        // D(x) = sin(πx)/sin(πx/N) (Dirichlet). Same table serves the
+        // amplitude solve AND the synthesis, so no normalization is needed.
+        auto dirich = [&](double x) -> double {
+            const double sx = std::sin(M_PI * x / N);
+            if (std::abs(sx) < 1e-12) return (double)N * std::cos(M_PI * x);
+            return std::sin(M_PI * x) / sx;
+        };
+        for (int t = 0; t <= 2 * KW * KOS; ++t) {
+            const double x = (double)(t - KW * KOS) / KOS;
+            _kern[t] = (float)(0.5 * dirich(x)
+                               + 0.25 * (dirich(x - 1.0) + dirich(x + 1.0)));
+        }
         // Twiddle tables (double-precision trig at init, no cost in process).
         for (int j = 0; j < M / 2; j++)
             _tw[j] = std::complex<float>((float)std::cos(2.0 * M_PI * j / M),
@@ -91,6 +118,10 @@ public:
         std::memset(_swl,       0, sizeof _swl);
         std::memset(_trk_f,     0, sizeof _trk_f);
         std::memset(_trk_on,    0, sizeof _trk_on);
+        for (auto& h : _hist) for (auto& c : h) c = {};
+        _hist_idx = 0;
+        _warm     = 0;
+        std::memset(_pr_on,     0, sizeof _pr_on);
         std::memset(_out_buf,   0, sizeof _out_buf);
         for (auto& c : _cx) c = {};
         _hop_cnt   = _hop_phase;   // NOT 0: a reset must not re-align the burst
@@ -121,6 +152,14 @@ public:
     float SMOOTH_SLOW = 0.20f;    // per-frame step on beat-wobble-sized moves
     float SMOOTH_FAST = 0.75f;    // ...on real moves > SMOOTH_TH bins
     float SMOOTH_TH   = 0.80f;    // fast/slow boundary, in bins
+    bool  PRONY_ON    = true;     // §22 parametric resynthesis of merged pairs
+#ifdef POGGED_PRONY_DEBUG
+    int dbg_engage = 0, dbg_birth = 0;   // frames rendered parametrically / new pairs
+    int dbg_rej[10] = {};   // rejection counters, indexed by gate
+#define PRONY_REJ(i) do { ++dbg_rej[i]; return false; } while (0)
+#else
+#define PRONY_REJ(i) return false
+#endif
 
     void tune(float floor_, float slow, float fast, float th) noexcept {
         PEAK_FLOOR = floor_; SMOOTH_SLOW = slow; SMOOTH_FAST = fast; SMOOTH_TH = th;
@@ -199,6 +238,7 @@ private:
             // phase of ~−π per bin (sign alternation); removing it makes the
             // lobe a SMOOTH complex curve that can be linearly interpolated.
             _ana_cx[k] = (k & 1) ? -_cx[k] : _cx[k];
+            _hist[_hist_idx][k] = _ana_cx[k];          // §22 Prony history
         }
 
         _ph_idx = (_ph_idx + 1) % EB;
@@ -240,11 +280,11 @@ private:
         // strongest are noise-born phantoms; their regions would chop real
         // lobes' skirts. The ENERGY at those bins is untouched — they simply
         // join a real peak's region.
+        _mmax = 0.0f;
+        for (int i = 0; i < n_peaks; ++i)
+            _mmax = std::max(_mmax, _ana_mag[_peaks[i]]);
         if (n_peaks > 0 && PEAK_FLOOR > 0.0f) {
-            float mmax = 0.0f;
-            for (int i = 0; i < n_peaks; ++i)
-                mmax = std::max(mmax, _ana_mag[_peaks[i]]);
-            const float floor_m = PEAK_FLOOR * mmax;
+            const float floor_m = PEAK_FLOOR * _mmax;
             int w = 0;
             for (int i = 0; i < n_peaks; ++i)
                 if (_ana_mag[_peaks[i]] >= floor_m) _peaks[w++] = _peaks[i];
@@ -282,6 +322,8 @@ private:
             if (_non[b]) _trk_f[b] = _nf[b];
         }
 
+        std::memset(_npr_on, 0, sizeof _npr_on);   // §22: refilled per frame
+
         if (n_peaks == 0) {
             for (int k = 0; k < BINS; k++) _cx[k] = {};   // silent frame
         } else {
@@ -309,6 +351,11 @@ private:
             // frames inherits a coherent phasor history.
             for (int k = 0; k < BINS; k++) _cx[k] = {};
             const float rot_c = 2.0f * float(M_PI) * HOP * (_ratio - 1.0f) / _sr;
+            // §22: parametric rendering needs a full history and a real shift
+            // (the unity-ratio dry copy must stay bit-faithful to the rigid
+            // path, which is an identity there).
+            const bool prony_ready = PRONY_ON && _warm >= PK &&
+                                     std::abs(_ratio - 1.0f) > 0.01f;
             for (int i = 0; i < n_peaks; ++i) {
                 const int   p      = _peaks[i];
                 const float inc    = rot_c * _nf[p];
@@ -318,6 +365,7 @@ private:
                     _rot[j] -= 2.0f * float(M_PI) *
                                std::round(_rot[j] * float(M_1_PI) * 0.5f);
                 }
+                if (prony_ready && _try_parametric(p, lo, hi)) continue;
                 const std::complex<float> ph = std::polar(1.0f, _rot[p]);
                 const float d_frac = (_nf[p] / _freq_pbin) * (_ratio - 1.0f);
                 const int dst_lo = std::max(0, (int)std::ceil((float)lo + d_frac));
@@ -337,6 +385,18 @@ private:
                 }
             }
         }
+        // §22 frame bookkeeping: commit pair tracks, advance the history.
+        for (int b = 0; b < BINS; ++b) {
+            _pr_on[b] = _npr_on[b];
+            if (_npr_on[b]) {
+                _pr_f1[b] = _npr_f1[b]; _pr_f2[b] = _npr_f2[b];
+                _pr_r1[b] = _npr_r1[b]; _pr_r2[b] = _npr_r2[b];
+                _pr_cnt[b] = _npr_cnt[b];
+            }
+        }
+        _hist_idx = (_hist_idx + 1) % PK;
+        if (_warm < PK + 1) ++_warm;
+
         // ── Per-bin attack swell ────────────────────────────────────────────
         // Each bin carries its own envelope: it follows the synthesis
         // magnitude freely DOWNWARD (decays and silence are untouched) and
@@ -385,6 +445,232 @@ private:
         }
         _out_write = (_out_write + HOP) % OUTBUF;
         _out_fill  = std::min(_out_fill + HOP, OUTBUF);
+    }
+
+    // §22 — kernel lookup, linear interpolation, W(0) = N/2.
+    float _kernel(float x) const noexcept {
+        const float t = x * KOS + KW * KOS;
+        if (t <= 0.0f || t >= 2 * KW * KOS) return 0.0f;
+        const int   i = (int)t;
+        const float f = t - i;
+        return _kern[i] + f * (_kern[i + 1] - _kern[i]);
+    }
+
+    // §22 — try the parametric (two-partial) rendering for the region whose
+    // peak is at bin p. Returns true when it rendered the region (the caller
+    // then skips the rigid translation); false = fall back.
+    bool _try_parametric(int p, int rlo, int rhi) noexcept {
+        // Significance: the parametric path exists for the LOUD colliding
+        // partials of a chord; on noise-floor regions an order-2 fit happily
+        // overfits and was measured to fire hundreds of phantom births.
+        if (_ana_mag[p] < 0.03f * _mmax) PRONY_REJ(0);
+
+        // The series of the de-alternated spectrum at bin p over the last PK
+        // frames, oldest first — any bin of the region carries the same two
+        // exponentials, so the series may stay at p even if the peak drifted.
+        std::complex<float> sr_[PK];
+        for (int m = 0; m < PK; ++m)
+            sr_[m] = _hist[(_hist_idx + 1 + m) % PK][p];
+
+        // Least-squares Prony, order 2: z[m] ≈ a1 z[m-1] + a2 z[m-2].
+        std::complex<float> Suv = 0, Syu = 0, Syv = 0;
+        float Suu = 0, Svv = 0, Eyy = 0;
+        for (int m = 2; m < PK; ++m) {
+            const std::complex<float> y = sr_[m], u = sr_[m - 1], v = sr_[m - 2];
+            Suu += std::norm(u);
+            Svv += std::norm(v);
+            Suv += std::conj(u) * v;
+            Syu += std::conj(u) * y;
+            Syv += std::conj(v) * y;
+            Eyy += std::norm(y);
+        }
+        const float det = Suu * Svv - std::norm(Suv);
+        if (!(det > 1e-12f * Suu * Svv) || Eyy < 1e-12f) PRONY_REJ(1);
+        const std::complex<float> a1 = (Svv * Syu - Suv * Syv) / det;
+        const std::complex<float> a2 = (Suu * Syv - std::conj(Suv) * Syu) / det;
+
+        // Gate hysteresis: as a beating pair's peak bin drifts onto a bin
+        // one partial dominates, the LOCAL series under-represents the other
+        // and the strict residual gates flicker — and every flicker is a
+        // rendering transition. A pair already alive nearby may continue at
+        // looser gates; only NEW pairs must pass the strict ones. Singles
+        // never create a pair track, so the loose path never opens for them.
+        bool near_pair = false;
+        for (int b = std::max(0, p - 2); b <= std::min(BINS - 1, p + 2); ++b)
+            near_pair |= _pr_on[b];
+
+        // The fit must actually explain the series (decays, onsets and noise
+        // do not look like two steady exponentials — those fall back).
+        float E = 0;
+        for (int m = 2; m < PK; ++m)
+            E += std::norm(sr_[m] - a1 * sr_[m - 1] - a2 * sr_[m - 2]);
+        if (E > (near_pair ? 0.15f : 0.05f) * Eyy) PRONY_REJ(2);
+
+        // THE decisive question — is there really a second exponential? The
+        // order-2 fit must beat the order-1 fit by an order of magnitude. A
+        // single partial (+noise) is already explained by one exponential,
+        // so its E1 is tiny and the ratio rejects; a genuine pair leaves
+        // order-1 with the whole beat as residual.
+        //
+        std::complex<float> Sc = 0; float Su1 = 0;
+        for (int m = 1; m < PK; ++m) {
+            Sc  += std::conj(sr_[m - 1]) * sr_[m];
+            Su1 += std::norm(sr_[m - 1]);
+        }
+        if (Su1 < 1e-20f) PRONY_REJ(3);
+        const std::complex<float> c1 = Sc / Su1;
+        float E1 = 0;
+        for (int m = 1; m < PK; ++m)
+            E1 += std::norm(sr_[m] - c1 * sr_[m - 1]);
+        if (E > (near_pair ? 0.30f : 0.08f) * E1) PRONY_REJ(3);
+
+        // Roots of r² − a1·r − a2: the two per-hop phase advances.
+        const std::complex<float> sq = std::sqrt(a1 * a1 + 4.0f * a2);
+        const std::complex<float> r1c = 0.5f * (a1 + sq), r2c = 0.5f * (a1 - sq);
+        const float m1 = std::abs(r1c), m2 = std::abs(r2c);
+        if (m1 < 0.6f || m1 > 1.5f || m2 < 0.6f || m2 > 1.5f) PRONY_REJ(4);
+
+        // Angles -> frequency offsets from bin p (±OS_/2 bins unambiguous).
+        const float tob = (float)OS_ * (float)(0.5 / M_PI);   // rad -> bins
+        float db1 = std::remainder(std::arg(r1c) * tob - (float)p, (float)OS_);
+        float db2 = std::remainder(std::arg(r2c) * tob - (float)p, (float)OS_);
+        const float sep = std::abs(db1 - db2);
+        // Too far apart = not one merged lobe. Too close = NOT a chord
+        // collision but a single partial's own fine structure (a real
+        // string's polarization doublet / AM sidebands sit within ~3 Hz):
+        // engaging there fits a two-component model to a three-component
+        // reality and mangles it — 0.3 bins keeps every measured inter-note
+        // collision while staying above intra-note structure.
+        if (sep < 0.30f || sep > 3.5f ||
+            std::abs(db1) > 3.2f || std::abs(db2) > 3.2f) PRONY_REJ(5);
+
+        // Complex amplitudes from the CURRENT frame: two bins, 2x2 solve
+        // against the known kernel. kern(0) = N/2 keeps everything in the
+        // analysis convention — the same table synthesises, so amplitudes
+        // need no normalization.
+        const int q2 = (p + 1 <= BINS - 2 &&
+                        (p == 0 || _ana_mag[p + 1] >= _ana_mag[p - 1]))
+                       ? p + 1 : p - 1;
+        if (q2 < 0) return false;
+        const float k11 = _kernel(-db1),            k12 = _kernel(-db2);
+        const float k21 = _kernel(q2 - p - db1),    k22 = _kernel(q2 - p - db2);
+        const float d2  = k11 * k22 - k12 * k21;
+        const float k0  = 0.5f * (float)N;
+        if (std::abs(d2) < 0.02f * k0 * k0) PRONY_REJ(6);
+        const std::complex<float> z1 = _ana_cx[p], z2 = _ana_cx[q2];
+        std::complex<float> A = ( z1 * k22 - z2 * k12) / d2;
+        std::complex<float> B = (-z1 * k21 + z2 * k11) / d2;
+
+        // Two alias/noise guards. At OS_=8 a root's frequency is only known
+        // modulo OS_ bins, so a NEIGHBOURING harmonic's sidelobe leak can
+        // masquerade as an in-range second partial (9.4 bins folds to 1.4).
+        // (1) a genuine pair carries real level on both sides; (2) the pair
+        // hypothesis must explain the lobe SHAPE at a third bin the 2x2
+        // solve never saw — an aliased component cannot.
+        const float aA = std::abs(A), aB = std::abs(B);
+        if (aB < 0.06f * aA || aA < 0.06f * aB) PRONY_REJ(7);
+        const int q3 = (q2 == p + 1) ? p - 1 : p + 1;
+        // ...and at the second bin on the off-centre candidate's side: the
+        // Hann kernel is EXACTLY zero at integer offsets >= 2, so a genuine
+        // off-centre partial must put energy there, while an aliased phantom
+        // (a distant harmonic folded mod OS_) predicts energy the real
+        // spectrum does not have. This is the decisive alias discriminator.
+        const float far_db = (std::abs(db1) > std::abs(db2)) ? db1 : db2;
+        const int   q4 = p + ((far_db >= 0.0f) ? 2 : -2);
+        for (int q : { q3, q4 }) {
+            if (q < 0 || q > BINS - 1) continue;
+            const std::complex<float> pred =
+                A * _kernel((float)(q - p) - db1) +
+                B * _kernel((float)(q - p) - db2);
+            if (std::abs(pred - _ana_cx[q]) >
+                0.15f * (std::abs(_ana_cx[p]) + 1e-20f)) PRONY_REJ(8);
+        }
+
+        // Pair track: inherit phasors and smoothed frequencies from the
+        // nearest pair of the previous frame (±2 bins), assignment by
+        // nearest frequency so the two partials cannot swap phasors.
+        float f1 = ((float)p + db1) * _freq_pbin;
+        float f2 = ((float)p + db2) * _freq_pbin;
+        int best = -1; float bd = 1e30f;
+        for (int b = std::max(0, p - 2); b <= std::min(BINS - 1, p + 2); ++b)
+            if (_pr_on[b]) {
+                const float d = std::abs(_pr_f1[b] - f1) + std::abs(_pr_f2[b] - f2);
+                const float dx = std::abs(_pr_f1[b] - f2) + std::abs(_pr_f2[b] - f1);
+                const float dm = std::min(d, dx);
+                if (dm < bd) { bd = dm; best = b; }
+            }
+        // Engagement hysteresis: starting a NEW pair demands a strong,
+        // unambiguous separation; an already-tracked pair may continue at
+        // the lower threshold — the borderline cases cannot flap between
+        // the parametric and rigid renderings frame to frame.
+        const bool tracked = (best >= 0 && bd < 4.0f * _freq_pbin);
+        if (!tracked && sep < 0.45f) PRONY_REJ(9);
+        int cnt = 1;
+        float r1 = _rot[p], r2 = _rot[p];
+        if (tracked) {
+            if (std::abs(_pr_f1[best] - f2) + std::abs(_pr_f2[best] - f1) <
+                std::abs(_pr_f1[best] - f1) + std::abs(_pr_f2[best] - f2)) {
+                std::swap(f1, f2);
+                std::swap(A, B);
+            }
+            f1 = _pr_f1[best] + 0.3f * (f1 - _pr_f1[best]);
+            f2 = _pr_f2[best] + 0.3f * (f2 - _pr_f2[best]);
+            r1 = _pr_r1[best];
+            r2 = _pr_r2[best];
+            cnt = _pr_cnt[best] + 1;
+        }
+        // Probation: a pair renders only after 3 consecutive good fits —
+        // one-frame flukes never reach the output. While on probation the
+        // phasors stay synced to the rigid path's rotation, so the first
+        // rendered frame is phase-CONTINUOUS with what was playing.
+        if (cnt < 3) {
+            _npr_f1[p] = f1; _npr_f2[p] = f2;
+            _npr_r1[p] = _rot[p]; _npr_r2[p] = _rot[p];
+            _npr_on[p] = true; _npr_cnt[p] = cnt;
+            return false;
+        }
+        const float rc = 2.0f * float(M_PI) * HOP * (_ratio - 1.0f) / _sr;
+        r1 += rc * f1;
+        r1 -= 2.0f * float(M_PI) * std::round(r1 * float(M_1_PI) * 0.5f);
+        r2 += rc * f2;
+        r2 -= 2.0f * float(M_PI) * std::round(r2 * float(M_1_PI) * 0.5f);
+        _npr_f1[p] = f1; _npr_f2[p] = f2;
+        _npr_r1[p] = r1; _npr_r2[p] = r2;
+        _npr_on[p] = true; _npr_cnt[p] = cnt;
+        // Reverse handoff: keep the rigid path's rotation riding along the
+        // DOMINANT partial's phasor, so a later fallback frame resumes in
+        // phase instead of jumping.
+        {
+            const float rdom = (std::abs(A) >= std::abs(B)) ? r1 : r2;
+            for (int j = rlo; j < rhi; ++j) _rot[j] = rdom;
+        }
+#ifdef POGGED_PRONY_DEBUG
+        ++dbg_engage;
+        if (!tracked) {
+            ++dbg_birth;
+            std::printf("[prony birth] p=%d db1=%+.2f db2=%+.2f sep=%.2f |A|=%.3g |B|=%.3g\n",
+                        p, db1, db2, sep, std::abs(A), std::abs(B));
+        }
+#endif
+
+        // Synthesis: one analytic kernel per partial at its own ×ratio
+        // target, rotated by its own phasor, alternation restored like the
+        // rigid path does.
+        const struct { float f, r; std::complex<float> a; } part[2] = {
+            { f1, r1, A }, { f2, r2, B }
+        };
+        for (const auto& q : part) {
+            const float tb = q.f * _ratio / _freq_pbin;
+            const std::complex<float> ph = q.a * std::polar(1.0f, q.r);
+            const int d_lo = std::max(1, (int)std::ceil(tb - KW));
+            const int d_hi = std::min(BINS - 2, (int)std::floor(tb + KW));
+            for (int dst = d_lo; dst <= d_hi; ++dst) {
+                std::complex<float> v = ph * _kernel((float)dst - tb);
+                if (dst & 1) v = -v;
+                _cx[dst] += v;
+            }
+        }
+        return true;
     }
 
     // ── Radix-2 DIT Cooley-Tukey FFT, size M, table-driven ────────────────
@@ -439,6 +725,25 @@ private:
     float _nf[BINS]             = {};
     bool  _trk_on[BINS]         = {};
     bool  _non[BINS]            = {};
+    // §22 state: spectra history ring for the Prony fit, per-pair tracks
+    // (frequencies + per-partial shift phasors, keyed by peak bin), kernel.
+    std::complex<float> _hist[PK][BINS] = {};
+    int   _hist_idx             = 0;
+    int   _warm                 = 0;
+    float _pr_f1[BINS]          = {};
+    float _pr_f2[BINS]          = {};
+    float _pr_r1[BINS]          = {};
+    float _pr_r2[BINS]          = {};
+    bool  _pr_on[BINS]          = {};
+    int   _pr_cnt[BINS]         = {};
+    int   _npr_cnt[BINS]        = {};
+    float _mmax                 = 0.0f;
+    float _npr_f1[BINS]         = {};
+    float _npr_f2[BINS]         = {};
+    float _npr_r1[BINS]         = {};
+    float _npr_r2[BINS]         = {};
+    bool  _npr_on[BINS]         = {};
+    float _kern[2 * KW * KOS + 1] = {};
 
     float _swl[BINS]            = {};   // per-bin swell envelope (see set_swell)
     float _swell_c              = -1.0f;   // < 0 = swell off

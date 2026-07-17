@@ -127,15 +127,18 @@ int main()
     shipped.set_xover(250.0f);
     shipped.tune(0.20f, 1.0f);   // §20: long-window smoothing only, as wired
     const Excess s = excess(shipped, in, ideal);
-    const bool ok = s.mean < 21.0 && s.worst < 75.0;
-    std::printf("  shipped 4096+2048 @ xout 250: excess AM mean %+.2f dB (< 21),"
-                " worst %+.1f dB (< 75)  [RATCHET, §20]%s\n",
+    const bool ok = s.mean < 19.0 && s.worst < 73.0;
+    std::printf("  shipped 4096+2048 @ xout 250: excess AM mean %+.2f dB (< 19),"
+                " worst %+.1f dB (< 73)  [RATCHET, §20]%s\n",
                 s.mean, s.worst, ok ? "  ok" : "  ** FAIL");
 
     // The out-of-budget purity reference (§16), report-only.
     static MultiVocoder<8192, 4096> pure;
     pure.init(SR);
     pure.set_xover(1200.0f * 2.0f);
+    pure.prony(false, false);   // §22 needs quasi-stationary history; at this
+                                // shape (341/171 ms) it is not — keep the §16
+                                // reference as §16 measured it
     const Excess o = excess(pure, in, ideal);
     std::printf("  [reference, report-only] 8192+4096 @ xin 1200 (171/85 ms): "
                 "mean %+.2f dB, worst %+.1f dB\n", o.mean, o.worst);

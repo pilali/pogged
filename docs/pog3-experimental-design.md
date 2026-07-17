@@ -1045,3 +1045,58 @@ moyenne 20,2 → 19,6 dB. Les paires profondément fusionnées de la fenêtre
 courte restent le mur : c'est le domaine du Spike 7 (résynthèse
 paramétrique, §20 voie 4) — la seule voie restante vers un saut qualitatif
 à ce budget de latence.
+
+---
+
+## 22. Spike 7 — résynthèse paramétrique des régions fusionnées ✓
+
+L'idée (§20 voie 4) : la stabilité n'exige pas de SÉPARER l'énergie de deux
+partiels fusionnés (Gabor l'interdit au budget de latence §20) — elle exige
+des PARAMÈTRES stables, et l'estimation peut regarder la série temporelle
+des trames sans retarder le signal. Implémenté dans `stream_vocoder.hpp` :
+
+- **Prony d'ordre 2** (moindres carrés) sur la série des 8 dernières trames
+  du spectre dé-alterné au bin du pic — les racines donnent les DEUX
+  fréquences au-delà de la résolution de la fenêtre ;
+- **amplitudes complexes** par résolution 2×2 sur deux bins contre le noyau
+  de Hann analytique (Dirichlet, table à l'init — le même noyau sert à
+  l'analyse et à la synthèse, donc aucune normalisation) ;
+- **synthèse** : deux noyaux, chacun à ratio×f_j exact avec son propre
+  phasor suivi — pas de wobble, pas de désaccord, et l'espacement de sortie
+  devient juste (×ratio, ce que la translation rigide ratait) ;
+- **repli rigide** dans tous les autres cas.
+
+**Le vrai travail du spike a été les gardes** — chaque itération mesurée :
+1. sonde naïve : 603 fausses naissances sur une CORDE SEULE (ajustements de
+   bruit, partiel unique réparti sur deux noyaux, harmoniques voisines
+   repliées mod OS) → +25 dB de dégâts sur h1 ;
+2. **gate de signification** (pic ≥ −30 dB du max de trame) — tue le bruit ;
+3. **le test décisif : ordre 2 vs ordre 1** (E2 < 0,1·E1) — « y a-t-il
+   vraiment une seconde exponentielle ? » ;
+4. **discriminateur d'alias** : le noyau de Hann est NUL aux offsets entiers
+   ≥ 2 — un vrai partiel décentré doit laisser de l'énergie au bin p±2 de
+   son côté, un fantôme replié en prédit là où il n'y en a pas ;
+5. **probation** (3 ajustements consécutifs avant de rendre) + **continuité
+   de phase** (phasors nés de `_rot`, réécrits dedans pendant l'engagement)
+   — plus de sauts aux transitions ;
+6. **hystérésis des gates résiduels** (une paire suivie tolère des gates
+   plus lâches ; les singles ne créent jamais de piste → jamais relâchés
+   pour eux) — le pic qui dérive sur un bin dominé par un seul partiel ne
+   casse plus l'engagement.
+
+**Mesuré** (audit, gates promus) :
+
+| Cas | avant Spike 7 | après |
+|---|---|---|
+| paire 34 Hz ×2 (fenêtre courte via multi) | 27,2 dB | **0,12 dB** — plancher idéal, ASSERTÉ < 0,5 |
+| paire 34 Hz ×4 | 31,2 dB | **0,06 dB** — ASSERTÉ |
+| corde seule (sécurité) | +0,02/+0,33 dB | **identique à OFF** |
+| accord réaliste (ratchet) | 19,6 / 71,9 dB | **17,5 / 71,0** (gates 19/73) |
+| CPU (8 voix) | 26,5 % avg | 26,8 % — négligeable |
+
+L'accord ne gagne que modérément : ses paires y BATTENT (3+ composantes par
+partiel de corde réelle) → le modèle à 2 exponentielles replie prudemment —
+comportement voulu. Extension naturelle si l'oreille en redemande : ordre 3
+sur les régions où l'ordre 2 échoue de peu, et engagement sur les paires
+battantes par sous-modèle. `-DPOGGED_PRONY_DEBUG` compile des compteurs de
+diagnostic (naissances, rejets par gate).

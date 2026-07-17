@@ -89,14 +89,19 @@ int main()
     bool ok = true;
     std::printf("══ shift stability on close partials (§15/§20) ══\n");
 
-    // The up voices, on the C3+E3 pair (34 Hz apart) — the §20 budget trade,
-    // tracked: lower is better, the long-window floor is the reference.
+    // The up voices, on the C3+E3 pair (34 Hz apart). These were the §20
+    // budget's report-only debt (25-40 dB of warble through the short
+    // window); the §22 parametric resynthesis resolves the pair from the
+    // frame HISTORY and renders each partial on its own kernel — measured at
+    // the ideal-shift floor, so they are ASSERTED again.
     for (float ratio : { 2.0f, 4.0f }) {
         const double m  = am_depth(multi, ratio, 130.81f, 164.81f);
         const double s4 = am_depth(vlong, ratio, 130.81f, 164.81f);
+        const bool this_ok = m < 0.5;
+        ok &= this_ok;
         std::printf("  x%g on C3+E3 (34 Hz apart): multi %.2f dB AM "
-                    "(long-window floor %.2f)  [REPORT-ONLY, §20 budget]\n",
-                    ratio, m, s4);
+                    "(long-window floor %.2f, < 0.5)%s\n",
+                    ratio, m, s4, this_ok ? "  ok" : "  ** FAIL");
     }
 
     // The sub, on a pair 43 Hz apart (input 165-208 Hz -> long window).

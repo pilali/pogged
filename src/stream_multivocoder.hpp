@@ -106,6 +106,15 @@ public:
         _hi.SMOOTH_SLOW = hi_slow;
     }
 
+    // §22 parametric resynthesis, per window. The fit history must be
+    // quasi-stationary: at the shipped hops (85/43 ms of history) it is; a
+    // long-window instance (8192/OS4: 341 ms) is NOT and measures worse —
+    // callers with such shapes should switch it off.
+    void prony(bool lo, bool hi) noexcept {
+        _lo.PRONY_ON = lo;
+        _hi.PRONY_ON = hi;
+    }
+
     // One shifted sample. Both sub-vocoders read the shared ring; the crossover
     // keeps the long path's lows and the short path's highs.
     float process(const float* ring, uint32_t mask, uint64_t wpos) noexcept {
