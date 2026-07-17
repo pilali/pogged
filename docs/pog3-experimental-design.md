@@ -564,7 +564,9 @@ fenêtres (`set_swell` transmis, même constante en ms donc crossover cohérent)
 `focus_test` passe à +0,2 dB du plancher idéal (le prix du crossover, asserté
 < 1,0) et la tenue de A dans `polyswell_test` va de −0,75 à −1,6 dB (les bins
 plus larges de la fenêtre courte laissent le transitoire mordre un peu plus —
-sous les −2 dB assertés).
+sous les −2 dB assertés). **Écoute post-intégration** (mix Classic POG swellé
+re-rendu via le multi-res) : verdict utilisateur — *le rendu reste bon* ; ni le
+swell ni le timbre n'ont perdu au change de moteur.
 
 **Coût CPU mesuré** (`tools/bench_vocoder.cpp`, hors audit — dépendant de la
 machine ; 8 voix, blocs de 128 à 48 kHz) : sur x86, multi-res **2,0× la
