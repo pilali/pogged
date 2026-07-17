@@ -863,3 +863,64 @@ La latence perçue d'une note est celle de son attaque, pas de son corps :
   recherche (le modèle de phase per-peak suppose la fenêtre symétrique).
 - **FFT réelle (rfft)** : travail FFT ÷2 — le levier CPU qui redonnerait du
   budget si une bande de plus redevenait désirable.
+
+---
+
+## 18. Réinjection de transitoire — la latence PERÇUE ✓
+
+La sortie de l'impasse du §17 : la latence ressentie d'une note est celle de
+son **attaque**, pas de son corps. Implémenté dans `pogged_dsp.cpp` :
+
+- l'entrée passe-haut (1,8 kHz, toujours chaud) est prélevée en **bouffée
+  enveloppée** (~12 ms de décroissance) à chaque onset (`OnsetDetector`
+  existant) et sommée au bus wet à latence ~nulle ;
+- **gaté par le DRY** (un dry présent EST déjà l'attaque à latence zéro —
+  la bouffée sert les presets wet-only ; le gate suit `1 − g_dry`, lissé) ;
+- **gaté par ATTACK** (un click ruinerait un swell délibéré) ;
+- mis à l'échelle de la somme des gains des voix wet.
+
+Le passe-haut rend la bouffée agnostique en hauteur (un transitoire de
+médiator est percussif, §12) — pas de conflit avec les octaves qui suivent.
+
+**Mesuré** (`tools/reinject_test.cpp`, dans `make audit`) :
+
+| Cas | Résultat |
+|---|---|
+| wet-only, pick | attaque entendue à **~0 ms** ; corps tonal à ~172 ms (report) |
+| ATTACK 500 ms | 30 premières ms à 0,7 % du niveau — bouffée bien gatée |
+| dry présent | fenêtre de pick = dry seul à 0,1 % près — jamais doublé |
+
+Constantes de départ à l'oreille : `BURST_HP_HZ` 1800, `BURST_MS` 12,
+`BURST_GAIN` 1,6 — les trois boutons à ajuster à l'écoute sur le Pi. Si le
+caractère plaît mais le niveau/couleur non, ce sont eux. Extension possible
+plus tard : un port « BITE » exposant BURST_GAIN.
+
+---
+
+## 19. FFT réelle + tables : ×1,65, le budget CPU rendu ✓
+
+L'entrée du vocodeur est réelle : la transformée tourne désormais sur
+**N/2 points complexes** (échantillons pairs dans le réel, impairs dans
+l'imaginaire, dépliage standard vers le demi-spectre) à l'analyse ET à la
+synthèse — le miroir hermitien n'existe plus en mémoire. Les twiddles
+`w *= wlen` (dépendance série dans la boucle interne + dérive d'arrondi)
+sont remplacés par des **tables précalculées** à l'init.
+
+**Mesuré** (bench 8 voix, blocs 128 @ 48 kHz, x86) :
+
+| Forme | avant | après |
+|---|---|---|
+| expédiée 8192+4096 | 29 % deadline (p99 ~63 %) | **17,5 % (p99 ~44 %)** |
+| 3 bandes §17 | 111-122 % p99 (impossible) | 56-76 % (redevient finançable) |
+
+Audit inchangé au bruit numérique près : le chemin est équivalent.
+
+**Les deux leviers suivants, évalués mais non faits :**
+- **NEON** : notre radix-2 sur `std::complex` vectorise mal ; le gain (×2-3
+  de plus) demande une réécriture split-radix en tableaux séparés re/im.
+  À noter : la cible rpi5 compile avec `-fno-tree-vectorize` (libmvec) —
+  toute vectorisation devra être explicite ou le flag affiné.
+- **Threads** : possible (une voix par cœur) mais hostile au modèle LV2
+  (mod-host possède le thread RT ; un pool interne risque la contention
+  avec les autres plugins). Dernier recours seulement — et avec la rfft,
+  le budget actuel ne le réclame plus.

@@ -227,6 +227,19 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 // during the fade; at rest exactly one does.
 static constexpr float FOCUS_XFADE_MS = 250.0f;
 
+// ── Transient reinjection (§18) ──────────────────────────────────────────────
+// The wet's FELT latency is its attack's: the pitched body cannot arrive
+// earlier (Gabor — §16/§17), but the pick's broadband snap can. On each onset
+// a short enveloped burst of the high-passed INPUT is summed into the wet bus
+// at (near) zero latency; the tonal body blooms behind it. The HP keeps the
+// burst pitch-agnostic — a pick transient is percussive, its pitch does not
+// matter (§12). Gated by the DRY level (a present dry already IS the
+// zero-latency attack; this serves wet-only presets) and by ATTACK (a click
+// would defeat a deliberate swell). Constants are ears-first starting points.
+static constexpr float BURST_HP_HZ = 1800.0f;   // click passband
+static constexpr float BURST_MS    = 12.0f;     // 90 % decay of the burst
+static constexpr float BURST_GAIN  = 1.6f;      // level vs the wet it fronts
+
 // ── Freeze + Gliss ───────────────────────────────────────────────────────────
 // The pedal's position sets the glide rate, "the closer the pedal is to the toe
 // position the slower the glissando rate". The two ends are not published, so
@@ -318,6 +331,11 @@ struct PoggedDsp {
     float env_level   = 0.0f;
     int   pending_trig = 0;       // duck-then-swell: samples until trigger()
     int   sil_count    = 0;       // samples of near-silence (release gate)
+
+    // Transient reinjection state (§18)
+    Biquad burst_hp;              // input HP, always warm
+    float  burst_env = 0.0f;      // per-onset decaying envelope
+    float  g_burst   = 0.0f;      // smoothed enable (dry/ATTACK gates)
 };
 
 // Size each sub voice's grain and correlation scan from the note IT emits.
@@ -420,6 +438,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->frz.init(sample_rate);
     p->det.init(sr);
     p->filt_det.init(sr);
+    p->burst_hp.setup(Biquad::HP, std::min(BURST_HP_HZ, ny), 0.707f, sr);
     pogged_dsp_reset(p);
     return p;
 }
@@ -458,6 +477,9 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->env_level     = 0.0f;
     p->pending_trig  = 0;
     p->sil_count     = 0;
+    p->burst_hp.reset();
+    p->burst_env     = 0.0f;
+    p->g_burst       = 0.0f;
     p->g_detmix      = 0.0f;
     p->g_filtmix     = 0.0f;
     p->det_phase     = 0.0f;
@@ -677,6 +699,8 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 
     // Per-sample gain smoothing coefficient (~30 ms)
     const float gc = 1.0f - std::exp(-1.0f / (0.030f * sr));
+    // Burst envelope decay: 90 % gone in BURST_MS (§18).
+    const float burst_c = std::exp(-std::log(9.0f) / (BURST_MS * 0.001f * sr));
 
     float*   ring = p->ring.data();
     const uint32_t mask = p->mask;
@@ -833,6 +857,25 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             }
             o *= p->g_up2;
             spread_mix(V_UP2, o, p->p_up2);
+        }
+
+        // ── Transient reinjection (§18) ───────────────────────────────────
+        // The HP always runs so it is warm when a burst fires. The gate
+        // fades with the dry level (dry present = the attack already exists
+        // at zero latency), with ATTACK (a click would defeat the swell),
+        // and scales with the wet voices actually mixed in.
+        {
+            const float hpx = p->burst_hp.process(x);
+            if (onset) p->burst_env = 1.0f;
+            else       p->burst_env *= burst_c;
+            const float wet_sum = std::min(1.0f, p->g_sub1 + p->g_sub2 +
+                                           p->g_up5 + p->g_up1 + p->g_up2);
+            const float tgt = (env_on ? 0.0f : 1.0f) *
+                              std::max(0.0f, 1.0f - p->g_dry) * wet_sum;
+            p->g_burst += gc * (tgt - p->g_burst);
+            const float b = BURST_GAIN * p->g_burst * p->burst_env * hpx;
+            wet_l += b;
+            wet_r += b;
         }
 
         // ── Dry path (POG3 DRY buttons) ──────────────────────────────────

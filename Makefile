@@ -107,6 +107,9 @@ clean:
 #   shimmer_test    — shimmer on a realistic chord (§16): colliding harmonics
 #                 between two notes must not warble (excess AM vs the ideal
 #                 shift bounded; the 8192 long window is what buys this)
+#   reinject_test   — transient reinjection (§18): a wet-only preset attacks
+#                 within ~20 ms (the reinjected pick snap) while the tonal
+#                 body blooms at its own pace; gated off by DRY and ATTACK
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -131,6 +134,7 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/polyswell_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/polyswell_test
 	$(CXX) $(AUDIT_FLAGS) tools/stability_test.cpp -o $(AUDIT_DIR)/stability_test
 	$(CXX) $(AUDIT_FLAGS) tools/shimmer_test.cpp -o $(AUDIT_DIR)/shimmer_test
+	$(CXX) $(AUDIT_FLAGS) tools/reinject_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/reinject_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -150,6 +154,7 @@ audit: $(HEADERS)
 	@echo "══ polyphonic attack swell (§14) ══"; $(AUDIT_DIR)/polyswell_test
 	@$(AUDIT_DIR)/stability_test
 	@$(AUDIT_DIR)/shimmer_test
+	@$(AUDIT_DIR)/reinject_test
 	@echo "AUDIT OK"
 
 .PHONY: audit
