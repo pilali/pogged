@@ -1141,3 +1141,19 @@ par porteuse APRÈS séparation grossière), fenêtres d'estimation par
 composante, ou engagement asymétrique (ne rendre paramétriquement QUE la
 composante que le rigide rendait mal — décidable par les historiques des
 deux rendus).
+
+### §23 — post-mortem : le Spike 8 est retiré, leçon de méthode
+
+Retour d'écoute sur le build Spike 8 : *recul net, scintillement renforcé,
+tierce grave très confuse* (l'utilisateur doute ensuite de son test — l'A/B
+au casque tranchera). Indépendamment de ce doute, le retrait est justifié
+par nos propres mesures : le diagnostic par harmonique montrait des
+régressions locales (+7 dB sur la fondamentale de la2) que la MOYENNE du
+ratchet masquait, et un delta jamais élucidé entre la réécriture K=2 et
+l'original du Spike 7. **Règle actée : aucune modification moteur ne
+s'expédie sur une amélioration de moyenne quand des composantes identifiées
+régressent — et l'écart inexpliqué entre deux implémentations « équivalentes »
+est un motif de non-expédition à lui seul.** Le moteur revient à l'état
+Spike 7 (`10b3f89`) ; les acquis du Spike 8 restent documentés ci-dessus
+(diagnostic par harmonique, infrastructure ordre 3 et rendu hybride dans
+l'historique git, mur de la paire de fondamentales identifié).
