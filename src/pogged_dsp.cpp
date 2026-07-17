@@ -29,9 +29,13 @@ using PoggedVocoder = StreamVocoder;
 #else
 using PoggedVocoder = MultiVocoder<8192, 4096>;
 // Input-side crossover constant (§15/§16): the short window only ever carries
-// output made from input partials above this, where its 11.7 Hz bins resolve
-// the collisions that remain. Swept on the shimmer material: 700 Hz leaves
-// +2.5 dB mean excess, 1200 reaches +1.4 (ceiling 1.2), higher buys nothing.
+// output made from input partials above this, where it resolves the
+// collisions that remain. NOT a 3-band ladder (§17, measured): every added
+// window costs a full engine per sample (~+50% CPU, past the Pi's budget)
+// and cannot lower the tonal core's latency anyway — collisions needing the
+// 8192 live everywhere below ~1200 Hz input, adjacent-scale-note
+// fundamentals included. The latency answer is the TIME split (§12/§16
+// transient reinjection), not more frequency bands.
 static constexpr float VOC_XOVER_IN = 1200.0f;
 #endif
 #endif
@@ -404,11 +408,10 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
 #ifndef POGGED_PV_N
-        // Input-referred crossover (§15): a voice at `ratio` puts an input
-        // partial at f on the output at ratio·f, so the output-side split
-        // sits at VOC_XOVER_IN×ratio — 2.4 kHz for +1, 600 Hz for the sub.
-        // Nominal ratio on purpose: Warp/detune bend the pitch, not the
-        // crossover.
+        // Input-referred crossovers (§15): a voice at `ratio` puts an input
+        // partial at f on the output at ratio·f, so the output-side splits
+        // sit at VOC_XOVER_IN*×ratio. Nominal ratio on purpose: Warp/detune
+        // bend the pitch, not the crossover.
         p->pv[v].set_xover(VOC_XOVER_IN * VOICE_RATIO[v]);
 #endif
     }

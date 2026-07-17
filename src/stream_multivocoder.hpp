@@ -115,3 +115,80 @@ private:
     float  _sr    = 48000.0f;
     float  _xover = XOVER;      // output-side; see set_xover
 };
+
+// Three-window ladder (§17): the collision belt keeps the LONG window it
+// needs (Gabor), everything above it climbs down the ladder — mid partials
+// on the MID window, sparkle and the attack's high-frequency snap on the
+// SHORT one, at a quarter of the latency. The crossover tree is two LR8
+// splits: out = LP1(lo) + HP1( LP2(mid) + HP2(hi) ). LP2+HP2 sums to an
+// allpass, so the outer pair still sees a Linkwitz-Riley-flat inner sum and
+// the whole tree stays allpass-flat. Same interface as StreamVocoder.
+template <int N_LO = 8192, int N_MID = 4096, int N_HI = 2048>
+class MultiVocoder3 {
+public:
+    static constexpr int N   = N_LO;
+    static constexpr int HOP = StreamVocoderT<N_LO>::HOP;   // stagger stride
+
+    void init(double sr, int hop_phase = 0) noexcept {
+        _sr = (float)sr;
+        _lo.init(sr, hop_phase);
+        // Sub-hop offsets so the three windows' FFT bursts land in different
+        // audio blocks (same invariant as MultiVocoder's half-hop, pinned by
+        // stagger_test: WHEN a window works is not part of its sound).
+        _mid.init(sr, hop_phase + StreamVocoderT<N_MID>::HOP / 2);
+        _hi.init(sr, hop_phase + StreamVocoderT<N_HI>::HOP / 4);
+        set_xover(_x1, _x2);
+        reset();
+    }
+
+    void reset() noexcept {
+        _lo.reset(); _mid.reset(); _hi.reset();
+        for (auto& b : _lp1) b.reset();
+        for (auto& b : _hp1) b.reset();
+        for (auto& b : _lp2) b.reset();
+        for (auto& b : _hp2) b.reset();
+    }
+
+    void set_ratio(float ratio) noexcept {
+        _lo.set_ratio(ratio); _mid.set_ratio(ratio); _hi.set_ratio(ratio);
+    }
+
+    void set_swell(float atk_ms) noexcept {
+        _lo.set_swell(atk_ms); _mid.set_swell(atk_ms); _hi.set_swell(atk_ms);
+    }
+
+    // Output-side crossovers, lo|mid at x1 and mid|hi at x2 — same
+    // input-referred logic as MultiVocoder::set_xover: each window may only
+    // carry output made from input partials it can resolve. Setup-time only.
+    void set_xover(float x1, float x2) noexcept {
+        _x1 = x1; _x2 = x2;
+        static constexpr float BW4_Q[2] = { 0.5412f, 1.3066f };
+        for (int i = 0; i < 4; ++i) {
+            _lp1[i].setup(Biquad::LP, _x1, BW4_Q[i & 1], _sr);
+            _hp1[i].setup(Biquad::HP, _x1, BW4_Q[i & 1], _sr);
+            _lp2[i].setup(Biquad::LP, _x2, BW4_Q[i & 1], _sr);
+            _hp2[i].setup(Biquad::HP, _x2, BW4_Q[i & 1], _sr);
+        }
+    }
+
+    float process(const float* ring, uint32_t mask, uint64_t wpos) noexcept {
+        float l = _lo.process(ring, mask, wpos);
+        float m = _mid.process(ring, mask, wpos);
+        float h = _hi.process(ring, mask, wpos);
+        for (auto& b : _lp2) m = b.process(m);
+        for (auto& b : _hp2) h = b.process(h);
+        float mh = m + h;
+        for (auto& b : _lp1) l  = b.process(l);
+        for (auto& b : _hp1) mh = b.process(mh);
+        return l + mh;
+    }
+
+private:
+    StreamVocoderT<N_LO>  _lo;    // collision belt, resolved
+    StreamVocoderT<N_MID> _mid;   // mid partials
+    StreamVocoderT<N_HI>  _hi;    // sparkle + attack snap
+    Biquad _lp1[4], _hp1[4];      // LR8 at x1 (lo | mid+hi)
+    Biquad _lp2[4], _hp2[4];      // LR8 at x2 (mid | hi)
+    float  _sr = 48000.0f;
+    float  _x1 = 1200.0f, _x2 = 5000.0f;
+};

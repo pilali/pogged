@@ -818,3 +818,48 @@ transitoires par un chemin court dédié — la **réinjection de transitoire**
 du §12 (tentative 2), déclenchée par l'`OnsetDetector` existant, alignée sur
 la latence du wet. Sur la pédale, le dry joue déjà ce rôle ; la réinjection
 sert les presets wet-only et le mordant des voix elles-mêmes.
+
+---
+
+## 17. L'échelle de fenêtres (8192→2048→1024) : mesurée, et c'est une impasse
+
+Demande utilisateur après le §16 : *le rendu est bien meilleur, la latence
+n'est pas acceptable — peut-on découper plus de bandes et étaler les fenêtres
+de 8192 à 2048, voire 1024 en haut ?* Implémenté (`MultiVocoder3`, arbre LR8
+à deux crossovers, dans `stream_multivocoder.hpp`) et balayé aux deux
+métriques (rugosité 5-80 Hz + AM en excès). Trois faits en sont sortis :
+
+**1. La pureté tient, et même s'améliore.** `8192/4096/2048 @ xin 1200/2500` :
+AM en excès moyen **+0,97 dB** (2-bandes : +1,4) ; remplacer le sommet par
+1024 ne change rien aux métriques (+0,99). x1 doit rester à 1200 (à 700, la
+bande 4096 récupère la ceinture de collisions : +4,9 dB moyen, +60 pire).
+
+**2. Le CPU interdit la 3ᵉ bande.** Le coût par échantillon d'une fenêtre est
+~constant en N (seul log N joue) : chaque bande AJOUTÉE coûte un moteur
+entier. Mesuré : 3 bandes = **+47 % de moyenne** vs 2 bandes, et le pire bloc
+**dépasse la deadline** sur x86 (p99 111-122 %) — xruns garantis sur Pi. Le
+gain d'écoute (21-42 ms au lieu de 85 au-dessus de 5 kHz de sortie) ne vaut
+pas ce prix.
+
+**3. Et surtout : l'échelle ne peut pas atteindre la cible.** Les collisions
+qui exigent le 8192 (écarts 5-45 Hz entre partiels de notes différentes)
+vivent PARTOUT sous ~1200 Hz d'entrée — y compris la zone des fondamentales
+(deux notes de gamme adjacentes qui se chevauchent en arpège : sol3 196 Hz et
+la3 220 Hz = 24 Hz d'écart). Descendre une bande rapide dans le corps tonal y
+ramène le scintillement ; l'y laisser maintient 171 ms. **Le découpage
+fréquentiel est épuisé** : la 2-bandes `8192+4096 @ xin 1200` est son
+optimum, et elle reste la forme expédiée. `MultiVocoder3` reste dans l'arbre
+comme infrastructure mesurée et documentée.
+
+### La suite — le découpage TEMPOREL, pas fréquentiel
+La latence perçue d'une note est celle de son attaque, pas de son corps :
+- **Réinjection de transitoire** (§12 tentative 2, prochain spike) : sur
+  onset (`OnsetDetector` déjà là), prélever une courte bouffée d'entrée
+  enveloppée et la sommer au bus wet — le claquement arrive en ~0 ms, le
+  corps tonal fleurit derrière (les presets avec dry ont déjà ce
+  comportement via le dry ; ceci sert les wet-only et le mordant des voix).
+- **Fenêtres asymétriques** (type AAC-LD) : résolution du côté long, latence
+  du côté court — pourrait ramener la ceinture de 171 vers ~100 ms. Spike de
+  recherche (le modèle de phase per-peak suppose la fenêtre symétrique).
+- **FFT réelle (rfft)** : travail FFT ÷2 — le levier CPU qui redonnerait du
+  budget si une bande de plus redevenait désirable.
