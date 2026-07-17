@@ -619,6 +619,29 @@ B 330 Hz attaquée dessus, ATTACK 500 ms, voix +1 oct :
 Le critère est asserté à −2 dB. Les 16 tests existants restent verts (le
 `swell_test` POG2 du granulaire est inchangé).
 
+**Mix Classic POG (dry + sub1 + up1), même matériau** — le test tourne aussi
+sur le mix complet, où chaque exigence du POG3 est visible à la fois :
+
+| Bande | swell par bin (vocodeur) | granulaire (global, report-only) |
+|---|---|---|
+| A tient, sub 110 Hz | **−1,9 dB** ✓ | −10,8 dB |
+| A tient, up 440 Hz | **−0,7 dB** ✓ | −9,1 dB |
+| B swelle, sub 165 Hz | 90 % en 540 ms ✓ | (duck global) |
+| B swelle, up 660 Hz | 90 % en 570 ms ✓ | (duck global) |
+| dry immédiat, 330 Hz | **1,00× dès 40 ms** ✓ | 1,01× (jamais swellé) |
+
+Le dry reste rigoureusement immédiat et non swellé (DRY ATTACK off) pendant
+que les deux octaves de B montent chacune sur leurs bins — c'est la scène
+POG3 complète. Le sub est la tenue la plus serrée (−1,9 dB) : 110 et 165 Hz
+ne sont qu'à ~4,7 bins dans la fenêtre 4096, les jupes des lobes se touchent.
+
+*Deux pièges de mesure documentés dans le test, trouvés en l'étendant au mix :*
+le **soft-clip de sortie** (la somme à 5 composantes crête au-dessus du genou
+0,7 → la compression monte quand B entre et mime un dip de ~1 dB sur A ;
+neutralisé par `out_level` 0,4, les métriques étant des ratios) ; et la
+**fuite du Goertzel rectangulaire** (le dry de B à 330 fuit à ~−20 dB dans la
+mesure à 440 et bat contre elle ; Goertzel fenêtré Hann, lobes < −31 dB).
+
 ### Reste à faire
 - **Écoute** : valider le rendu à l'oreille sur un arpège réel (le −0,9 dB
   résiduel vient du transitoire de B qui traverse la bande de A ; garde de

@@ -3,17 +3,23 @@
 // already ringing" (design doc §14).
 //
 // Material: A (220 Hz) is picked and HELD; 2.5 s later B (330 Hz, with a
-// pick-like transient) is attacked ON TOP of the still-ringing A. The +1
-// octave voice is the only one active, so the wet carries A at 440 Hz and B
-// at 660 Hz. With a 500 ms ATTACK the POG3 criterion splits in two:
-//   1. B's octave (660 Hz) must SWELL — quiet right after the attack, ~90 %
-//      of its steady level in roughly attack_ms;
-//   2. A's octave (440 Hz) must NOT move while B swells.
-// A single wet-bus envelope cannot do both: if the detector fires on B it
+// pick-like transient) is attacked ON TOP of the still-ringing A. With a
+// 500 ms ATTACK the POG3 criterion splits per band:
+//   1. B's octaves must SWELL — quiet right after the attack, ~90 % of their
+//      steady level in roughly attack_ms;
+//   2. A's octaves must NOT move while B swells;
+//   3. the DRY (when mixed in) takes no swell at all: B's fundamental is
+//      there immediately, at full level — the POG's defining trait, only the
+//      DRY ATTACK button routes the dry through the envelope.
+// A single wet-bus envelope cannot do 1 AND 2: if the detector fires on B it
 // ducks A (the re-pick duck), and if it does not fire B never swells. Only a
-// per-band envelope passes 1 AND 2 — which is what the vocoder's per-bin
-// swell provides. Asserted on the vocoder engine (focus = 1); the granular
-// engine keeps the POG2-style global envelope and is reported for contrast.
+// per-band envelope passes both — which is what the vocoder's per-bin swell
+// provides. Asserted on the vocoder engine (focus = 1); the granular engine
+// keeps the POG2-style global envelope and is reported for contrast.
+//
+// Two mixes are run: the isolated +1 octave (the cleanest measurement), and
+// the Classic-POG mix dry + sub1 + up1, where A lives at 110/440 Hz wet and
+// B at 165/660 Hz wet + 330 Hz dry.
 #include "../src/pogged_dsp.h"
 #include <cmath>
 #include <cstdio>
@@ -28,12 +34,20 @@ static constexpr float T_SIL   = 0.5f;    // lead-in silence
 static constexpr float T_B_ON  = 3.0f;    // B attacked here; A rings on
 static constexpr float T_END   = 5.5f;
 
-static std::vector<float> render(float focus, const std::vector<float>& in)
+static std::vector<float> render(float focus, float dry, float sub1, float up1,
+                                 const std::vector<float>& in)
 {
     PoggedDsp* dsp = pogged_dsp_new(SR);
     PoggedParams p = {};
-    p.up1_level   = 1.0f;
-    p.out_level   = 1.0f;
+    p.dry_level   = dry;
+    p.sub1_level  = sub1;
+    p.up1_level   = up1;
+    // Applied BEFORE the output soft-clip: at unity the 5-component mix
+    // (dry A+B, sub A+B, up A+B) crests past the 0.7 knee, and the clipper's
+    // compression rises when B enters — a headroom artifact that would show
+    // up as a fake "dip" on A's bands. Every metric here is a ratio, so the
+    // scale-down changes nothing else.
+    p.out_level   = 0.4f;
     p.input_gain  = 1.0f;
     p.lp_cutoff   = 20000.0f;
     p.lp_q        = 0.707f;
@@ -50,17 +64,107 @@ static std::vector<float> render(float focus, const std::vector<float>& in)
     return out;
 }
 
-// Band amplitude at f over [from, from+len) (Goertzel, normalized).
+// Band amplitude at f over [from, from+len) (Goertzel, normalized). Hann
+// weighted: a rectangular window leaks ~-20 dB between the mix's components
+// (330 dry into the 440 measurement at 30 ms), which beats against the band
+// under test and fakes a ~1 dB dip. Hann sidelobes are below -31 dB.
 static double band(const std::vector<float>& x, int from, int len, float f)
 {
     const double w = 2.0 * M_PI * f / SR, c = 2.0 * std::cos(w);
-    double s0 = 0.0, s1 = 0.0, s2 = 0.0;
-    for (int i = from; i < from + len; ++i) {
-        s0 = (double)x[i] + c * s1 - s2;
+    double s0 = 0.0, s1 = 0.0, s2 = 0.0, wsum = 0.0;
+    for (int i = 0; i < len; ++i) {
+        const double wn = 0.5 * (1.0 - std::cos(2.0 * M_PI * i / (len - 1)));
+        s0 = (double)x[from + i] * wn + c * s1 - s2;
         s2 = s1; s1 = s0;
+        wsum += wn;
     }
     const double p = s1 * s1 + s2 * s2 - c * s1 * s2;
-    return 2.0 * std::sqrt(std::max(0.0, p)) / len;
+    return 2.0 * std::sqrt(std::max(0.0, p)) / wsum;
+}
+
+// Analysis window per band: the low octaves (110/165 Hz, 55 Hz apart) need a
+// longer window than the ups to keep the Goertzel leakage between them and
+// the 220/330 dry components ~-23 dB; the ups stay on the original 30 ms.
+static int win_of(float f) { return (int)((f < 300.0f ? 0.080f : 0.030f) * SR); }
+
+struct Check { const char* what; float f; };
+
+// One engine on one mix. Returns false only when asserted and failing.
+static bool run_mix(const char* mix_name, float dry, float sub1, float up1,
+                    int eng, const std::vector<float>& in)
+{
+    const bool assert_this = (eng == 1);    // vocoder asserted; granular
+                                            // stays POG2-global, reported
+    const auto out = render((float)eng, dry, sub1, up1, in);
+    const int  b_on = (int)(T_B_ON * SR);
+    const int  n    = (int)in.size();
+    const int  hop  = (int)(0.010f * SR);
+    bool ok = true;
+
+    std::printf("  %s, %s engine:%s\n", mix_name,
+                eng ? "vocoder " : "granular",
+                assert_this ? "" : "  [report-only: POG2-style global envelope]");
+
+    // A's wet octaves must hold while B swells: worst dip over [B, B+1.2 s],
+    // excluding a 60 ms guard right at the attack where B's own broadband
+    // pick transient legitimately crosses the band.
+    const Check holds[] = { { "sub -1", 110.0f }, { "up +1", 440.0f } };
+    for (const auto& h : holds) {
+        if ((h.f < 300.0f ? sub1 : up1) <= 0.0f) continue;
+        const int win = win_of(h.f);
+        double ref = 0.0; int nref = 0;
+        for (int i = b_on - (int)(0.5f * SR); i + win <= b_on; i += hop, ++nref)
+            ref += band(out, i, win, h.f);
+        ref /= nref;
+        const int guard = (int)(0.060f * SR);
+        double worst = 1e30;
+        for (int i = b_on + guard; i + win <= b_on + (int)(1.2f * SR); i += hop)
+            worst = std::min(worst, band(out, i, win, h.f));
+        const double dip_db = 20.0 * std::log10(worst / ref);
+        const bool this_ok = dip_db > -2.0;
+        if (assert_this) ok = ok && this_ok;
+        std::printf("    A holds at %s (%g Hz): dip %+.2f dB (ref %.4f)%s\n",
+                    h.what, h.f, dip_db, ref,
+                    assert_this ? (this_ok ? "  (> -2)  ok" : "  (> -2)  ** FAIL") : "");
+    }
+
+    // B's wet octaves must swell: quiet early on, ~steady after attack_ms.
+    // Levels are read at the OUTPUT, so the engine's own latency (~85 ms
+    // vocoder) is inside the tolerance band rather than subtracted out.
+    const Check swells[] = { { "sub -1", 165.0f }, { "up +1", 660.0f } };
+    for (const auto& s : swells) {
+        if ((s.f < 300.0f ? sub1 : up1) <= 0.0f) continue;
+        const int win = win_of(s.f);
+        const double steady = band(out, n - (int)(0.4f * SR), (int)(0.3f * SR), s.f);
+        const double early  = band(out, b_on + (int)(0.130f * SR), win, s.f);
+        int t90 = -1;
+        for (int i = b_on; i + win <= n; i += hop)
+            if (band(out, i, win, s.f) >= 0.9 * steady) { t90 = i - b_on; break; }
+        const double t90_ms = 1000.0 * t90 / SR;
+        const bool ok_early = early < 0.55 * steady;
+        const bool ok_t90   = (t90 > 0) && t90_ms > 0.4 * ATK_MS && t90_ms < 2.0 * ATK_MS;
+        if (assert_this) ok = ok && ok_early && ok_t90;
+        std::printf("    B swells at %s (%g Hz): early %.4f / steady %.4f (< 0.55x)%s,"
+                    " 90%% in %.0f ms (0.4-2.0x of %g)%s\n",
+                    s.what, s.f, early, steady,
+                    assert_this ? (ok_early ? "  ok" : "  ** FAIL") : "",
+                    t90_ms, ATK_MS,
+                    assert_this ? (ok_t90 ? "  ok" : "  ** FAIL") : "");
+    }
+
+    // The dry takes NO swell: B's fundamental is at full level right away
+    // (window starts 40 ms in, past the pick transient's 2.5x spike).
+    if (dry > 0.0f) {
+        const int win = win_of(330.0f);
+        const double steady = band(out, n - (int)(0.4f * SR), (int)(0.3f * SR), 330.0f);
+        const double early  = band(out, b_on + (int)(0.040f * SR), win, 330.0f);
+        const bool this_ok  = early > 0.8 * steady;
+        if (assert_this) ok = ok && this_ok;
+        std::printf("    dry is immediate at 330 Hz: early %.4f / steady %.4f (> 0.8x)%s\n",
+                    early, steady,
+                    assert_this ? (this_ok ? "  ok" : "  ** FAIL") : "");
+    }
+    return ok;
 }
 
 int main()
@@ -80,58 +184,10 @@ int main()
         in[i] += 0.4f * spike * std::sin(2.0 * M_PI * 330.0 * t);
     }
 
-    const int win = (int)(0.030f * SR);         // 30 ms analysis window
-    const int hop = (int)(0.010f * SR);
-
     bool all_ok = true;
     for (int eng = 1; eng >= 0; --eng) {
-        const bool assert_this = (eng == 1);    // vocoder asserted; granular
-                                                // stays POG2-global, reported
-        const auto out = render((float)eng, in);
-
-        // A's steady octave level, right before B (0.5 s average).
-        const int ref_from = b_on - (int)(0.5f * SR);
-        double ref = 0.0; int nref = 0;
-        for (int i = ref_from; i + win <= b_on; i += hop, ++nref)
-            ref += band(out, i, win, 440.0f);
-        ref /= nref;
-
-        // 1. A must hold while B swells: worst dip of the 440 Hz band over
-        // [B, B + 1.2 s], excluding a 60 ms guard right at the attack where
-        // B's own broadband pick transient legitimately crosses the bin.
-        const int guard = (int)(0.060f * SR);
-        double worst = 1e30;
-        for (int i = b_on + guard; i + win <= b_on + (int)(1.2f * SR); i += hop)
-            worst = std::min(worst, band(out, i, win, 440.0f));
-        const double dip_db = 20.0 * std::log10(worst / ref);
-
-        // 2. B must swell: quiet early on, ~steady after attack_ms. Levels are
-        // read at the OUTPUT, so the engine's own latency (~85 ms vocoder) is
-        // inside the tolerance band rather than subtracted out.
-        const double steady_b = band(out, n - (int)(0.4f * SR), (int)(0.3f * SR), 660.0f);
-        const double early_b  = band(out, b_on + (int)(0.130f * SR), win, 660.0f);
-        int t90 = -1;
-        for (int i = b_on; i + win <= n; i += hop)
-            if (band(out, i, win, 660.0f) >= 0.9 * steady_b) { t90 = i - b_on; break; }
-        const double t90_ms = 1000.0 * t90 / SR;
-
-        const bool ok_hold  = dip_db > -2.0;
-        const bool ok_early = early_b < 0.55 * steady_b;
-        const bool ok_t90   = (t90 > 0) && t90_ms > 0.4 * ATK_MS && t90_ms < 2.0 * ATK_MS;
-
-        std::printf("  %s engine:\n", eng ? "vocoder " : "granular");
-        std::printf("    A (440 Hz) while B swells: dip %+.2f dB (ref %.4f)%s\n",
-                    dip_db, ref,
-                    assert_this ? (ok_hold ? "  (> -2)  ok" : "  (> -2)  ** FAIL")
-                                : "  [report-only: POG2-style global envelope]");
-        std::printf("    B (660 Hz) swell: early %.4f / steady %.4f (< 0.55x)%s\n",
-                    early_b, steady_b,
-                    assert_this ? (ok_early ? "  ok" : "  ** FAIL") : "");
-        std::printf("    B reaches 90%% in %.0f ms (0.4-2.0x of %g)%s\n",
-                    t90_ms, ATK_MS,
-                    assert_this ? (ok_t90 ? "  ok" : "  ** FAIL") : "");
-
-        if (assert_this) all_ok = ok_hold && ok_early && ok_t90;
+        all_ok &= run_mix("up1 only          ", 0.0f, 0.0f, 1.0f, eng, in);
+        all_ok &= run_mix("dry + sub1 + up1  ", 1.0f, 1.0f, 1.0f, eng, in);
     }
 
     std::printf("polyswell_test: %s\n", all_ok ? "PASS" : "FAIL");
