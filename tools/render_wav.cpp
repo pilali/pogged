@@ -4,7 +4,7 @@
 //
 //   g++ -O2 -std=c++17 -Isrc tools/render_wav.cpp src/pogged_dsp.cpp -o build/render_wav
 //   build/render_wav build/renders            # writes dry/granular/vocoder/filterbank
-//                                             #        + swell_global/swell_polyphonic
+//                                             #        + swell_[mix_]global/polyphonic
 //
 // The passage is two things the engines find hard, back to back:
 //   1. a fingerstyle ARPEGGIO — an E-major shape plucked note by note, each note
@@ -116,14 +116,19 @@ static std::vector<float> run_granular(const std::vector<float>& in)
     return out;
 }
 
-// Whole-plugin render for the ATTACK swell A/B (§14): wet-only +1 octave,
-// 500 ms swell, engine picked by `focus`.
-static std::vector<float> run_plugin_swell(const std::vector<float>& in, float focus)
+// Whole-plugin render for the ATTACK swell A/B (§14): 500 ms swell, engine
+// picked by `focus`, voice mix by dry/sub1/up1.
+static std::vector<float> run_plugin_swell(const std::vector<float>& in, float focus,
+                                           float dry, float sub1, float up1)
 {
     PoggedDsp* dsp = pogged_dsp_new(SR);
     PoggedParams p = {};
-    p.up1_level   = 1.0f;
-    p.out_level   = 1.0f;
+    p.dry_level   = dry;
+    p.sub1_level  = sub1;
+    p.up1_level   = up1;
+    // Below the output soft-clip's knee even on the full mix (the renders are
+    // peak-normalised afterwards, so this only buys linearity, not loudness).
+    p.out_level   = 0.4f;
     p.input_gain  = 1.0f;
     p.lp_cutoff   = 20000.0f;
     p.lp_q        = 0.707f;
@@ -176,8 +181,14 @@ int main(int argc, char** argv)
     for (int k = 0; k < 4; ++k)
         pluck(in_swell, arp[k], 0.3 + 0.8 * k, 4.5, 0.8, 1.2);
     normalize(in_swell);
-    outs.push_back({ "swell_global",     run_plugin_swell(in_swell, 0.0f) });  // granular, POG2 env
-    outs.push_back({ "swell_polyphonic", run_plugin_swell(in_swell, 1.0f) });  // vocoder, per-bin
+    // Wet-only +1 octave: the swell in isolation…
+    outs.push_back({ "swell_global",     run_plugin_swell(in_swell, 0.0f, 0, 0, 1) });  // granular, POG2 env
+    outs.push_back({ "swell_polyphonic", run_plugin_swell(in_swell, 1.0f, 0, 0, 1) });  // vocoder, per-bin
+    // …and the Classic-POG mix (dry + sub1 + up1): the dry attacks land
+    // immediately while both octaves swell around them — or, in the global
+    // version, duck the octaves of every note still ringing.
+    outs.push_back({ "swell_mix_global",     run_plugin_swell(in_swell, 0.0f, 1, 1, 1) });
+    outs.push_back({ "swell_mix_polyphonic", run_plugin_swell(in_swell, 1.0f, 1, 1, 1) });
 
     bool ok = true;
     for (auto& o : outs) {
