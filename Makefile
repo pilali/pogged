@@ -101,6 +101,9 @@ clean:
 #   polyswell_test  — POG3 polyphonic ATTACK (§14): a new attack swells in on
 #                 its own bins while notes already ringing keep their sustain
 #                 (vocoder asserted; granular reported, it stays POG2-global)
+#   stability_test  — shift stability on close partials (§15): the multi-res
+#                 crossover is input-referred (XOVER x ratio on up voices) so
+#                 the short window never renders partials it cannot resolve
 AUDIT_DIR   = build/audit
 AUDIT_FLAGS = -O2 -std=c++17 -Isrc
 
@@ -123,6 +126,7 @@ audit: $(HEADERS)
 	$(CXX) $(AUDIT_FLAGS) tools/arpeggio_test.cpp -o $(AUDIT_DIR)/arpeggio_test
 	$(CXX) $(AUDIT_FLAGS) tools/multires_test.cpp -o $(AUDIT_DIR)/multires_test
 	$(CXX) $(AUDIT_FLAGS) tools/polyswell_test.cpp src/pogged_dsp.cpp -o $(AUDIT_DIR)/polyswell_test
+	$(CXX) $(AUDIT_FLAGS) tools/stability_test.cpp -o $(AUDIT_DIR)/stability_test
 	@echo "══ pitch content ══";  $(AUDIT_DIR)/shift_test
 	@echo "══ attack swell ══";   $(AUDIT_DIR)/swell_test
 	@echo "══ level clicks ══";   $(AUDIT_DIR)/click_test
@@ -140,6 +144,7 @@ audit: $(HEADERS)
 	@$(AUDIT_DIR)/arpeggio_test
 	@$(AUDIT_DIR)/multires_test
 	@echo "══ polyphonic attack swell (§14) ══"; $(AUDIT_DIR)/polyswell_test
+	@$(AUDIT_DIR)/stability_test
 	@echo "AUDIT OK"
 
 .PHONY: audit

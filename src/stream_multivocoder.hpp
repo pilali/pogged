@@ -14,7 +14,7 @@
 // So run BOTH and split by frequency:
 //   - a LONG window carries the BASS  (resolved low chords / subs);
 //   - a SHORT window carries the TREBLE and the ATTACK transients (tight).
-// Both read the shared ring; their outputs cross over (Linkwitz-Riley 4th order)
+// Both read the shared ring; their outputs cross over (Linkwitz-Riley 8th order)
 // and sum — lows from the long path, highs from the short path. Frequency-
 // dependent latency falls out for free: the bass pays the long window (~85 ms,
 // forgiven down there) while attacks come through the short window (~42 ms), so
@@ -37,6 +37,7 @@ public:
     static constexpr float XOVER = 250.0f;    // crossover frequency, Hz
 
     void init(double sr, int hop_phase = 0) noexcept {
+        _sr = (float)sr;
         _lo.init(sr, hop_phase);
         // Half a short hop apart: with the SAME phase, every long-window burst
         // lands in the same audio block as one of the short window's (HOP_LO
@@ -46,11 +47,35 @@ public:
         // stagger relies on, pinned by stagger_test). Measured worst block for
         // 8 voices at 128 samples: 31% of the deadline in phase, 22% offset.
         _hi.init(sr, hop_phase + StreamVocoderT<N_HI>::HOP / 2);
-        // Linkwitz-Riley 4th order = two cascaded Butterworth (Q=0.707) each
-        // side; LP+HP then sum flat with no phase notch at XOVER.
-        for (auto& b : _lp) b.setup(Biquad::LP, XOVER, 0.707f, (float)sr);
-        for (auto& b : _hp) b.setup(Biquad::HP, XOVER, 0.707f, (float)sr);
+        set_xover(_xover);
         reset();
+    }
+
+    // Crossover frequency, on the OUTPUT. What actually matters is the INPUT
+    // side: the short window's bins can only resolve input partials above
+    // ~XOVER Hz, and a voice at `ratio` puts an input partial at f on the
+    // output at ratio·f. So the up voices must cross at XOVER×ratio — with
+    // the default 250 an up-1 voice hands the short window output down to
+    // 250 Hz, i.e. input partials down to 125 Hz, which its 23 Hz bins CANNOT
+    // separate on a chord (measured: 12-25 dB of amplitude warble on two
+    // partials 34 Hz apart; the long window holds 0.00 dB — design §15).
+    // The down voices already satisfy the constraint at 250 (output 250 =
+    // input 500), so the caller only ever RAISES this. Setup-time only: it
+    // rebuilds the filters, so it is not for per-block modulation.
+    void set_xover(float hz) noexcept {
+        _xover = hz;
+        // Linkwitz-Riley 8th order = a squared 4th-order Butterworth per side
+        // (biquad Qs 0.5412 / 1.3066, twice); LP+HP still sum allpass-flat.
+        // LR4 was not steep enough HERE: the short window's rendition of the
+        // partials just below the crossover is the very thing the split
+        // exists to discard (it can be 30 dB of warble), and at 24 dB/oct it
+        // leaked back in at ~-22 dB — an audible ±0.7 dB of residual AM on
+        // the up voices. 48 dB/oct buries it (measured in stability_test).
+        static constexpr float BW4_Q[2] = { 0.5412f, 1.3066f };
+        for (int i = 0; i < 4; ++i) {
+            _lp[i].setup(Biquad::LP, _xover, BW4_Q[i & 1], _sr);
+            _hp[i].setup(Biquad::HP, _xover, BW4_Q[i & 1], _sr);
+        }
     }
 
     void reset() noexcept {
@@ -86,5 +111,7 @@ public:
 private:
     StreamVocoderT<N_LO> _lo;   // bass, resolved
     StreamVocoderT<N_HI> _hi;   // treble + attacks, tight
-    Biquad _lp[2], _hp[2];      // LR4 crossover on the outputs
+    Biquad _lp[4], _hp[4];      // LR8 crossover on the outputs (see set_xover)
+    float  _sr    = 48000.0f;
+    float  _xover = XOVER;      // output-side; see set_xover
 };

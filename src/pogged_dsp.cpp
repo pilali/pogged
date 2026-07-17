@@ -389,6 +389,15 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     for (int v = 0; v < N_VOICES; ++v) {
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
+#ifndef POGGED_PV_N
+        // Input-referred crossover (§15): the short window may only carry
+        // output made from input partials it can resolve (> ~XOVER Hz), so an
+        // up voice crosses at XOVER×ratio (500 Hz for +1, 1 kHz for +2). The
+        // down voices already satisfy that at XOVER — unchanged. Nominal
+        // ratio on purpose: Warp/detune bend the pitch, not the crossover.
+        p->pv[v].set_xover(PoggedVocoder::XOVER *
+                           std::max(1.0f, VOICE_RATIO[v]));
+#endif
     }
 #endif
 

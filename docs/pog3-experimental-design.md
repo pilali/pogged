@@ -692,3 +692,54 @@ pire cas d'harmoniques partagées (E3 = h2 de E2) — le comportement
   jour exister à 3 ms de latence, c'est un banc d'enveloppes temps-réel par
   sous-bande (les gains réels ne décorrèlent pas, contrairement aux phases des
   Spikes 1-4) — piste ouverte, non bloquante.
+
+---
+
+## 15. Le « vibrant » des voix up : crossover référencé entrée + LR8 ✓
+
+Retour d'écoute sur le Pi (§13 intégré) : *voix légèrement « vibrantes »,
+surtout +1/+2, un peu audible aussi en dessous*. Cause trouvée, mesurée,
+corrigée — en deux couches.
+
+**Couche 1 — le crossover était référencé côté sortie, la résolution vit côté
+entrée.** Une voix à `ratio` place un partiel d'entrée f en sortie à ratio·f.
+Avec le crossover fixe à 250 Hz en sortie, la voix +1 confiait à la fenêtre
+**courte** de la sortie jusqu'à 250 Hz — donc des partiels d'**entrée**
+jusqu'à 125 Hz, que ses bins de 23,4 Hz ne séparent pas sur un accord : les
+lobes fusionnent, le pic bat, la translation module. Sonde (do3+mi3, 34 Hz
+d'écart — un voicing banal — transposés ×2) :
+
+| Moteur | AM par partiel en sortie |
+|---|---|
+| mono 4096 | **0,00 dB** |
+| mono 2048 | 10-33 dB |
+| multi, xover 250 sortie | **12-25 dB** ← le « vibrant » entendu |
+
+Les subs étaient épargnés (250 sortie = 500 entrée — large), d'où la
+perception « surtout +1/+2 ». Correctif : **xover_sortie = 250 × ratio** pour
+les voix montantes (500 Hz pour +1, 1 kHz pour +2, 375 pour la quinte), 250
+inchangé ailleurs — la constante qui compte, 250 Hz **côté entrée**, est
+partout respectée. `set_xover()` dans `MultiVocoder`, câblé sur le ratio
+nominal (Warp/détune bougent le pitch, pas le crossover).
+
+**Couche 2 — la jupe du LR4 laissait fuir le rejet.** Résidu mesuré ~1 dB :
+la version courte-fenêtre des partiels sous le crossover — précisément ce que
+le split existe pour jeter, jusqu'à 30 dB de warble — ne repassait qu'à
+~−22 dB (24 dB/oct). Crossover porté en **Linkwitz-Riley 8ᵉ ordre**
+(48 dB/oct, somme toujours allpass-plate, 4 biquads par côté — négligeable
+devant les FFT : ratio CPU multi/mono inchangé à 2,0× au bench).
+
+**Mesuré** (`tools/stability_test.cpp`, dans `make audit`) : AM par partiel
+×2 **0,19 dB**, ×4 **0,14 dB**, ×0,5 **0,16 dB** (plancher 4096 : 0,00 ;
+gates à 0,5 dB ; contre-exemples 33 / 25 dB gardés en report-only). Effets
+collatéraux positifs : `focus_test` revient à **+0,0 dB** du plancher idéal
+(le +0,2 était cette même fuite) et la tenue de A dans `polyswell_test`
+remonte de −1,6 à **−0,8 dB**. Le prix, honnête : le bas-médium des voix up
+repaie la fenêtre longue (85 ms sous 500 Hz de sortie pour +1) — la zone où
+l'oreille pardonne ; l'attaque aiguë reste à 42 ms.
+
+**Pistes restantes si un résidu s'entend encore à l'écoute** (par ordre) :
+suivi de partiels + lissage de fréquence par piste (le jitter d'estimation
+sur corde réelle, toutes voix) ; fenêtre à lobes plus bas (Blackman-Harris)
+sur le chemin court ; overlap 87,5 % (CPU ×2) ; PGHI (Průša-Holighaus 2017)
+en chantier de fond.
