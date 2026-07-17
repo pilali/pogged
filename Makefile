@@ -23,6 +23,9 @@ ifeq ($(TARGET),rpi5)
     # Static libstdc++/libgcc: embed the C++ runtime so the .so doesn't depend
     # on the target system's libstdc++ version.
     override LDFLAGS  := -static-libstdc++ -static-libgcc
+    # The bench is a standalone executable copied onto the device: fully
+    # static, so it runs on the Buildroot system regardless of its glibc.
+    BENCH_LDFLAGS     := -static
 
 else ifeq ($(TARGET),moddwarf-new)
     # MOD Dwarf — Cortex-A35, the most constrained target.
@@ -140,6 +143,21 @@ audit: $(HEADERS)
 	@echo "AUDIT OK"
 
 .PHONY: audit
+
+# ── Bench: worst-block cost of the vocoder path (§13) ───────────────────────
+# Machine-dependent, so run BY HAND, never in audit. Native: `make bench &&
+# build/bench_vocoder`. For the Pi 5: `make bench TARGET=rpi5`, copy
+# build/bench_vocoder to the device (it is fully static) and run it there —
+# ideally once with the audio host stopped and once while it plays, three
+# passes each, and note the CPU governor (a Pi idling at `ondemand` reads
+# slower than it plays).
+bench: tools/bench_vocoder.cpp $(HEADERS)
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -Isrc tools/bench_vocoder.cpp -o build/bench_vocoder \
+	       $(LDFLAGS) $(BENCH_LDFLAGS)
+	@echo "-> build/bench_vocoder  (TARGET=$(TARGET))"
+
+.PHONY: bench
 
 install: $(BINARY)
 	install -d $(DESTDIR)/usr/lib/lv2
