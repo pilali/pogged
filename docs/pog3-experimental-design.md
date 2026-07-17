@@ -1100,3 +1100,44 @@ comportement voulu. Extension naturelle si l'oreille en redemande : ordre 3
 sur les régions où l'ordre 2 échoue de peu, et engagement sur les paires
 battantes par sous-modèle. `-DPOGGED_PRONY_DEBUG` compile des compteurs de
 diagnostic (naissances, rejets par gate).
+
+---
+
+## 23. Spike 8 — le résidu de l'accord : clusters battants, ordre 3, rendu hybride
+
+Cible : la dette restante du ratchet (accord réaliste : 17,5 / 71 dB), là où
+chaque partiel est un CLUSTER (porteuse + bandes latérales de polarisation)
+et où deux clusters collisionnent (4-6 composantes par région).
+
+**Fait pendant le spike :**
+1. **Diagnostic par harmonique ON/OFF** : le §22 est net-positif sur l'accord
+   (moyenne 19,6 → 16,8 avec les extensions) mais MIXTE par harmonique — il
+   aide massivement les composantes que le rigide massacrait (C#3 h1 :
+   36 → 16 dB ; h3 : 45 → 17 ; A2 h9 : 12 → 1) et dégrade localement des
+   composantes que le rigide rendait bien (A2 h1 : 7 → 13,5).
+2. **Escalade à l'ordre 3** (Durand-Kerner sur le cubique, moindres carrés
+   3×3, jusqu'à 3 noyaux par région, acceptation stricte : E3 < 0,10·E1 ET
+   E3 < 0,25·E2) — implémentée, sûre, mais quasi inerte sur ce matériau :
+   les vrais clusters à 6 composantes ne passent pas non plus l'ordre 3.
+3. **Rendu hybride résiduel** : les K noyaux modélisés + le RÉSIDU du modèle
+   translaté rigidement (rien ne disparaît plus — l'ancienne version jetait
+   les bandes latérales non modélisées, ce qui aplatissait le battement
+   naturel). Architecture conservée : c'est la bonne forme générale.
+4. **Gates exposés en membres** (`prony_gates`, `prony_maxk`) + garde du
+   rayon d'appariement des pistes (2·fpb par composante : plus lâche, les
+   pistes de régions voisines se croisent et échangent leurs phasors).
+5. **Contrainte tenue partout** : corde seule = OFF à 0,01 dB près, paire
+   pure 0,12 dB, sub 0,14 dB, audit 20/20.
+
+**Net : ratchet resserré à 18 / 71** (mesuré 16,8 / 69,0). CPU p99 ~50 %
+x86 chargé — dans le budget.
+
+**Le mur restant, précisément identifié** : la paire de FONDAMENTALES
+battantes (A2 h1 + C#3 h1, 2,4 bins à 4096, fusionnées à 2048), à cheval sur
+le crossover — l'engagement y échange la qualité entre les deux composantes
+(l'une gagne 20 dB, l'autre perd 6) et ni l'ordre 3 ni l'hybride ne
+départagent. Pistes pour un éventuel Spike 9 : modèle par cluster (ordre 2
+par porteuse APRÈS séparation grossière), fenêtres d'estimation par
+composante, ou engagement asymétrique (ne rendre paramétriquement QUE la
+composante que le rigide rendait mal — décidable par les historiques des
+deux rendus).

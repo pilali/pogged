@@ -153,6 +153,9 @@ public:
     float SMOOTH_FAST = 0.75f;    // ...on real moves > SMOOTH_TH bins
     float SMOOTH_TH   = 0.80f;    // fast/slow boundary, in bins
     bool  PRONY_ON    = true;     // §22 parametric resynthesis of merged pairs
+    float PRONY_E1_NEW = 0.08f;   // order2-vs-order1 gate, new pairs (strict)
+    float PRONY_E1_TRK = 0.30f;   // ...and for already-tracked pairs (loose)
+    int   PRONY_MAX_K  = 3;       // 2 = no order-3 escalation (§23)
 #ifdef POGGED_PRONY_DEBUG
     int dbg_engage = 0, dbg_birth = 0;   // frames rendered parametrically / new pairs
     int dbg_rej[10] = {};   // rejection counters, indexed by gate
@@ -389,8 +392,11 @@ private:
         for (int b = 0; b < BINS; ++b) {
             _pr_on[b] = _npr_on[b];
             if (_npr_on[b]) {
-                _pr_f1[b] = _npr_f1[b]; _pr_f2[b] = _npr_f2[b];
-                _pr_r1[b] = _npr_r1[b]; _pr_r2[b] = _npr_r2[b];
+                _pr_n[b] = _npr_n[b];
+                for (int i = 0; i < _npr_n[b]; ++i) {
+                    _pr_f[i][b] = _npr_f[i][b];
+                    _pr_r[i][b] = _npr_r[i][b];
+                }
                 _pr_cnt[b] = _npr_cnt[b];
             }
         }
@@ -456,216 +462,355 @@ private:
         return _kern[i] + f * (_kern[i + 1] - _kern[i]);
     }
 
-    // §22 — try the parametric (two-partial) rendering for the region whose
-    // peak is at bin p. Returns true when it rendered the region (the caller
-    // then skips the rigid translation); false = fall back.
+    // §22/§23 — try the parametric rendering for the region whose peak is
+    // at bin p. Fits order 2, and when that cannot explain the series
+    // (a real string's partial is a CLUSTER: carrier + polarization
+    // sidebands, so a colliding pair is 4-6 components), escalates to
+    // order 3. K roots become K kernels, each at its own ×ratio target with
+    // its own tracked phasor. Returns true when it rendered the region;
+    // false = fall back to the rigid translation.
     bool _try_parametric(int p, int rlo, int rhi) noexcept {
         // Significance: the parametric path exists for the LOUD colliding
-        // partials of a chord; on noise-floor regions an order-2 fit happily
-        // overfits and was measured to fire hundreds of phantom births.
-        if (_ana_mag[p] < 0.03f * _mmax) PRONY_REJ(0);
+        // partials of a chord; on noise-floor regions the fit overfits and
+        // was measured to fire hundreds of phantom births.
+        if (_ana_mag[p] < 0.03f * _mmax) return false;
 
-        // The series of the de-alternated spectrum at bin p over the last PK
-        // frames, oldest first — any bin of the region carries the same two
-        // exponentials, so the series may stay at p even if the peak drifted.
         std::complex<float> sr_[PK];
         for (int m = 0; m < PK; ++m)
             sr_[m] = _hist[(_hist_idx + 1 + m) % PK][p];
 
-        // Least-squares Prony, order 2: z[m] ≈ a1 z[m-1] + a2 z[m-2].
-        std::complex<float> Suv = 0, Syu = 0, Syv = 0;
-        float Suu = 0, Svv = 0, Eyy = 0;
-        for (int m = 2; m < PK; ++m) {
-            const std::complex<float> y = sr_[m], u = sr_[m - 1], v = sr_[m - 2];
-            Suu += std::norm(u);
-            Svv += std::norm(v);
-            Suv += std::conj(u) * v;
-            Syu += std::conj(u) * y;
-            Syv += std::conj(v) * y;
-            Eyy += std::norm(y);
+        // Order-1 baseline: THE reference all higher fits must beat — "is
+        // there really more than one exponential here?"
+        std::complex<float> Sc = 0; float Su1 = 0, Eyy = 0;
+        for (int m = 1; m < PK; ++m) {
+            Sc  += std::conj(sr_[m - 1]) * sr_[m];
+            Su1 += std::norm(sr_[m - 1]);
+            Eyy += std::norm(sr_[m]);
         }
-        const float det = Suu * Svv - std::norm(Suv);
-        if (!(det > 1e-12f * Suu * Svv) || Eyy < 1e-12f) PRONY_REJ(1);
-        const std::complex<float> a1 = (Svv * Syu - Suv * Syv) / det;
-        const std::complex<float> a2 = (Suu * Syv - std::conj(Suv) * Syu) / det;
+        if (Su1 < 1e-20f || Eyy < 1e-12f) return false;
+        const std::complex<float> c1 = Sc / Su1;
+        float E1 = 0;
+        for (int m = 1; m < PK; ++m)
+            E1 += std::norm(sr_[m] - c1 * sr_[m - 1]);
 
-        // Gate hysteresis: as a beating pair's peak bin drifts onto a bin
-        // one partial dominates, the LOCAL series under-represents the other
-        // and the strict residual gates flicker — and every flicker is a
-        // rendering transition. A pair already alive nearby may continue at
+        // Gate hysteresis: a pair already alive nearby may continue at
         // looser gates; only NEW pairs must pass the strict ones. Singles
         // never create a pair track, so the loose path never opens for them.
         bool near_pair = false;
         for (int b = std::max(0, p - 2); b <= std::min(BINS - 1, p + 2); ++b)
             near_pair |= _pr_on[b];
+        const float e1_gate = near_pair ? PRONY_E1_TRK : PRONY_E1_NEW;
 
-        // The fit must actually explain the series (decays, onsets and noise
-        // do not look like two steady exponentials — those fall back).
-        float E = 0;
-        for (int m = 2; m < PK; ++m)
-            E += std::norm(sr_[m] - a1 * sr_[m - 1] - a2 * sr_[m - 2]);
-        if (E > (near_pair ? 0.15f : 0.05f) * Eyy) PRONY_REJ(2);
-
-        // THE decisive question — is there really a second exponential? The
-        // order-2 fit must beat the order-1 fit by an order of magnitude. A
-        // single partial (+noise) is already explained by one exponential,
-        // so its E1 is tiny and the ratio rejects; a genuine pair leaves
-        // order-1 with the whole beat as residual.
-        //
-        std::complex<float> Sc = 0; float Su1 = 0;
-        for (int m = 1; m < PK; ++m) {
-            Sc  += std::conj(sr_[m - 1]) * sr_[m];
-            Su1 += std::norm(sr_[m - 1]);
+        // ── Order-2 LS fit ────────────────────────────────────────────────
+        int K = 0;
+        float E2_keep = 1e30f;
+        std::complex<float> rt[3];
+        {
+            std::complex<float> Suv = 0, Syu = 0, Syv = 0;
+            float Suu = 0, Svv = 0;
+            for (int m = 2; m < PK; ++m) {
+                const std::complex<float> y = sr_[m], u = sr_[m-1], v = sr_[m-2];
+                Suu += std::norm(u); Svv += std::norm(v);
+                Suv += std::conj(u) * v;
+                Syu += std::conj(u) * y; Syv += std::conj(v) * y;
+            }
+            const float det = Suu * Svv - std::norm(Suv);
+            if (det > 1e-12f * Suu * Svv) {
+                const std::complex<float> a1 = (Svv * Syu - Suv * Syv) / det;
+                const std::complex<float> a2 = (Suu * Syv - std::conj(Suv) * Syu) / det;
+                float E2 = 0;
+                for (int m = 2; m < PK; ++m)
+                    E2 += std::norm(sr_[m] - a1 * sr_[m-1] - a2 * sr_[m-2]);
+                E2_keep = E2;
+                if (E2 <= e1_gate * E1 &&
+                    E2 <= (near_pair ? 0.15f : 0.05f) * Eyy) {
+                    const std::complex<float> sq = std::sqrt(a1 * a1 + 4.0f * a2);
+                    rt[0] = 0.5f * (a1 + sq);
+                    rt[1] = 0.5f * (a1 - sq);
+                    K = 2;
+                }
+            }
         }
-        if (Su1 < 1e-20f) PRONY_REJ(3);
-        const std::complex<float> c1 = Sc / Su1;
-        float E1 = 0;
-        for (int m = 1; m < PK; ++m)
-            E1 += std::norm(sr_[m] - c1 * sr_[m - 1]);
-        if (E > (near_pair ? 0.30f : 0.08f) * E1) PRONY_REJ(3);
 
-        // Roots of r² − a1·r − a2: the two per-hop phase advances.
-        const std::complex<float> sq = std::sqrt(a1 * a1 + 4.0f * a2);
-        const std::complex<float> r1c = 0.5f * (a1 + sq), r2c = 0.5f * (a1 - sq);
-        const float m1 = std::abs(r1c), m2 = std::abs(r2c);
-        if (m1 < 0.6f || m1 > 1.5f || m2 < 0.6f || m2 > 1.5f) PRONY_REJ(4);
+        // ── Order-3 escalation (§23): the beating-cluster case ────────────
+        if (K == 0 && PRONY_MAX_K >= 3) {
+            std::complex<float> G[3][3], bb[3], a[3];
+            for (int i = 0; i < 3; ++i) { bb[i] = 0; for (int j = 0; j < 3; ++j) G[i][j] = 0; }
+            for (int m = 3; m < PK; ++m) {
+                const std::complex<float> u[3] = { sr_[m-1], sr_[m-2], sr_[m-3] };
+                for (int i = 0; i < 3; ++i) {
+                    bb[i] += std::conj(u[i]) * sr_[m];
+                    for (int j = 0; j < 3; ++j) G[i][j] += std::conj(u[i]) * u[j];
+                }
+            }
+            // Gaussian elimination with partial pivoting, 3x3 complex.
+            int piv[3] = { 0, 1, 2 };
+            bool sing = false;
+            for (int c = 0; c < 3 && !sing; ++c) {
+                int mx = c;
+                for (int r = c + 1; r < 3; ++r)
+                    if (std::norm(G[piv[r]][c]) > std::norm(G[piv[mx]][c])) mx = r;
+                std::swap(piv[c], piv[mx]);
+                if (std::norm(G[piv[c]][c]) < 1e-24f) { sing = true; break; }
+                for (int r = c + 1; r < 3; ++r) {
+                    const std::complex<float> f = G[piv[r]][c] / G[piv[c]][c];
+                    for (int cc = c; cc < 3; ++cc) G[piv[r]][cc] -= f * G[piv[c]][cc];
+                    bb[piv[r]] -= f * bb[piv[c]];
+                }
+            }
+            if (!sing) {
+                for (int c = 2; c >= 0; --c) {
+                    std::complex<float> acc = bb[piv[c]];
+                    for (int cc = c + 1; cc < 3; ++cc) acc -= G[piv[c]][cc] * a[cc];
+                    a[c] = acc / G[piv[c]][c];
+                }
+                float E3 = 0;
+                for (int m = 3; m < PK; ++m)
+                    E3 += std::norm(sr_[m] - a[0]*sr_[m-1] - a[1]*sr_[m-2] - a[2]*sr_[m-3]);
+                // Order 3 must EARN its engagement: strict vs the order-1
+                // baseline (no tracked relaxation — a partial 3-of-6 fit on a
+                // dense cluster measured WORSE than falling back), and it
+                // must clearly beat order 2, else the third root is noise.
+                if (E3 <= 0.10f * E1 && E3 <= 0.25f * E2_keep) {
+                    // Durand-Kerner on r^3 - a0 r^2 - a1 r - a2.
+                    std::complex<float> x[3] = { {0.9f, 0.4f}, {-0.6f, 0.8f}, {0.3f, -0.9f} };
+                    for (int it = 0; it < 40; ++it) {
+                        for (int i = 0; i < 3; ++i) {
+                            const std::complex<float> xi = x[i];
+                            const std::complex<float> pv =
+                                ((xi - a[0]) * xi - a[1]) * xi - a[2];
+                            std::complex<float> den = { 1.0f, 0.0f };
+                            for (int j = 0; j < 3; ++j)
+                                if (j != i) den *= (xi - x[j]);
+                            if (std::norm(den) < 1e-30f) continue;
+                            x[i] = xi - pv / den;
+                        }
+                    }
+                    // accept only if the roots really solve the cubic
+                    bool okr = true;
+                    for (int i = 0; i < 3; ++i) {
+                        const std::complex<float> pv =
+                            ((x[i] - a[0]) * x[i] - a[1]) * x[i] - a[2];
+                        okr &= std::norm(pv) < 1e-6f * (1.0f + std::norm(x[i]));
+                    }
+                    if (okr) { rt[0] = x[0]; rt[1] = x[1]; rt[2] = x[2]; K = 3; }
+                }
+            }
+        }
+        if (K == 0) return false;
 
-        // Angles -> frequency offsets from bin p (±OS_/2 bins unambiguous).
+        // ── Per-root gates ────────────────────────────────────────────────
         const float tob = (float)OS_ * (float)(0.5 / M_PI);   // rad -> bins
-        float db1 = std::remainder(std::arg(r1c) * tob - (float)p, (float)OS_);
-        float db2 = std::remainder(std::arg(r2c) * tob - (float)p, (float)OS_);
-        const float sep = std::abs(db1 - db2);
-        // Too far apart = not one merged lobe. Too close = NOT a chord
-        // collision but a single partial's own fine structure (a real
-        // string's polarization doublet / AM sidebands sit within ~3 Hz):
-        // engaging there fits a two-component model to a three-component
-        // reality and mangles it — 0.3 bins keeps every measured inter-note
-        // collision while staying above intra-note structure.
-        if (sep < 0.30f || sep > 3.5f ||
-            std::abs(db1) > 3.2f || std::abs(db2) > 3.2f) PRONY_REJ(5);
+        float db[3];
+        for (int i = 0; i < K; ++i) {
+            const float mo = std::abs(rt[i]);
+            if (mo < 0.6f || mo > 1.5f) return false;
+            db[i] = std::remainder(std::arg(rt[i]) * tob - (float)p, (float)OS_);
+            if (std::abs(db[i]) > 3.2f) return false;
+        }
+        // Cluster separation: the region must really contain a SECOND
+        // cluster (an inter-note collision), not just one partial's own fine
+        // structure (sidebands within ~3 Hz). Widest pairwise separation
+        // carries that information for any K.
+        float sep = 0.0f;
+        for (int i = 0; i < K; ++i)
+            for (int j = i + 1; j < K; ++j)
+                sep = std::max(sep, std::abs(db[i] - db[j]));
+        if (sep < 0.30f || sep > 3.5f) return false;
 
-        // Complex amplitudes from the CURRENT frame: two bins, 2x2 solve
-        // against the known kernel. kern(0) = N/2 keeps everything in the
-        // analysis convention — the same table synthesises, so amplitudes
-        // need no normalization.
-        const int q2 = (p + 1 <= BINS - 2 &&
-                        (p == 0 || _ana_mag[p + 1] >= _ana_mag[p - 1]))
-                       ? p + 1 : p - 1;
-        if (q2 < 0) return false;
-        const float k11 = _kernel(-db1),            k12 = _kernel(-db2);
-        const float k21 = _kernel(q2 - p - db1),    k22 = _kernel(q2 - p - db2);
-        const float d2  = k11 * k22 - k12 * k21;
-        const float k0  = 0.5f * (float)N;
-        if (std::abs(d2) < 0.02f * k0 * k0) PRONY_REJ(6);
-        const std::complex<float> z1 = _ana_cx[p], z2 = _ana_cx[q2];
-        std::complex<float> A = ( z1 * k22 - z2 * k12) / d2;
-        std::complex<float> B = (-z1 * k21 + z2 * k11) / d2;
+        // ── Complex amplitudes: K x K against the analytic kernel ─────────
+        std::complex<float> A[3];
+        const float k0 = 0.5f * (float)N;
+        if (K == 2) {
+            const int q2 = (p + 1 <= BINS - 2 &&
+                            (p == 0 || _ana_mag[p + 1] >= _ana_mag[p - 1]))
+                           ? p + 1 : p - 1;
+            if (q2 < 0) return false;
+            const float k11 = _kernel(-db[0]),         k12 = _kernel(-db[1]);
+            const float k21 = _kernel(q2 - p - db[0]), k22 = _kernel(q2 - p - db[1]);
+            const float d2  = k11 * k22 - k12 * k21;
+            if (std::abs(d2) < 0.02f * k0 * k0) return false;
+            const std::complex<float> z1 = _ana_cx[p], z2 = _ana_cx[q2];
+            A[0] = ( z1 * k22 - z2 * k12) / d2;
+            A[1] = (-z1 * k21 + z2 * k11) / d2;
+        } else {
+            if (p < 1 || p > BINS - 2) return false;
+            float KM[3][3];
+            std::complex<float> zb[3];
+            for (int r = 0; r < 3; ++r) {
+                const int q = p - 1 + r;
+                zb[r] = _ana_cx[q];
+                for (int c = 0; c < 3; ++c)
+                    KM[r][c] = _kernel((float)(q - p) - db[c]);
+            }
+            // 3x3 real-matrix solve with complex RHS (Cramer is fine here).
+            const float d3 =
+                  KM[0][0] * (KM[1][1] * KM[2][2] - KM[1][2] * KM[2][1])
+                - KM[0][1] * (KM[1][0] * KM[2][2] - KM[1][2] * KM[2][0])
+                + KM[0][2] * (KM[1][0] * KM[2][1] - KM[1][1] * KM[2][0]);
+            if (std::abs(d3) < 0.005f * k0 * k0 * k0) return false;
+            for (int c = 0; c < 3; ++c) {
+                float T[3][3];
+                for (int r = 0; r < 3; ++r)
+                    for (int cc = 0; cc < 3; ++cc) T[r][cc] = KM[r][cc];
+                std::complex<float> num = 0;
+                // replace column c with zb (expand along that column)
+                const float cof0 = T[1][(c+1)%3] * T[2][(c+2)%3] - T[1][(c+2)%3] * T[2][(c+1)%3];
+                const float cof1 = T[0][(c+2)%3] * T[2][(c+1)%3] - T[0][(c+1)%3] * T[2][(c+2)%3];
+                const float cof2 = T[0][(c+1)%3] * T[1][(c+2)%3] - T[0][(c+2)%3] * T[1][(c+1)%3];
+                num = zb[0] * cof0 + zb[1] * cof1 + zb[2] * cof2;
+                A[c] = ((c & 1) ? -num : num) / d3;
+            }
+        }
+        // Level sanity: at least two components must carry real level (a
+        // lone significant component = a single partial, rigid handles it).
+        float amax = 0.0f;
+        for (int i = 0; i < K; ++i) amax = std::max(amax, std::abs(A[i]));
+        int strong = 0;
+        for (int i = 0; i < K; ++i) strong += (std::abs(A[i]) >= 0.06f * amax);
+        if (strong < 2 || amax < 1e-20f) return false;
 
-        // Two alias/noise guards. At OS_=8 a root's frequency is only known
-        // modulo OS_ bins, so a NEIGHBOURING harmonic's sidelobe leak can
-        // masquerade as an in-range second partial (9.4 bins folds to 1.4).
-        // (1) a genuine pair carries real level on both sides; (2) the pair
-        // hypothesis must explain the lobe SHAPE at a third bin the 2x2
-        // solve never saw — an aliased component cannot.
-        const float aA = std::abs(A), aB = std::abs(B);
-        if (aB < 0.06f * aA || aA < 0.06f * aB) PRONY_REJ(7);
-        const int q3 = (q2 == p + 1) ? p - 1 : p + 1;
-        // ...and at the second bin on the off-centre candidate's side: the
-        // Hann kernel is EXACTLY zero at integer offsets >= 2, so a genuine
-        // off-centre partial must put energy there, while an aliased phantom
-        // (a distant harmonic folded mod OS_) predicts energy the real
-        // spectrum does not have. This is the decisive alias discriminator.
-        const float far_db = (std::abs(db1) > std::abs(db2)) ? db1 : db2;
-        const int   q4 = p + ((far_db >= 0.0f) ? 2 : -2);
-        for (int q : { q3, q4 }) {
-            if (q < 0 || q > BINS - 1) continue;
-            const std::complex<float> pred =
-                A * _kernel((float)(q - p) - db1) +
-                B * _kernel((float)(q - p) - db2);
-            if (std::abs(pred - _ana_cx[q]) >
-                0.15f * (std::abs(_ana_cx[p]) + 1e-20f)) PRONY_REJ(8);
+        // Shape check at p±2: the Hann kernel is EXACTLY zero at integer
+        // offsets >= 2, so a genuine off-centre component must put energy
+        // there — an aliased phantom (a distant harmonic folded mod OS_)
+        // predicts energy the real spectrum does not have.
+        {
+            int qs[3] = { p - 2, p + 2, -1 };
+            if (K == 2) {
+                const int q2 = (p + 1 <= BINS - 2 &&
+                                (p == 0 || _ana_mag[p + 1] >= _ana_mag[p - 1]))
+                               ? p + 1 : p - 1;
+                qs[2] = (q2 == p + 1) ? p - 1 : p + 1;   // the unused ±1 bin
+            }
+            for (int q : qs) {
+                if (q < 0 || q > BINS - 1) continue;
+                std::complex<float> pred = 0;
+                for (int i = 0; i < K; ++i)
+                    pred += A[i] * _kernel((float)(q - p) - db[i]);
+                if (std::abs(pred - _ana_cx[q]) >
+                    0.15f * (std::abs(_ana_cx[p]) + 1e-20f)) return false;
+            }
         }
 
-        // Pair track: inherit phasors and smoothed frequencies from the
-        // nearest pair of the previous frame (±2 bins), assignment by
-        // nearest frequency so the two partials cannot swap phasors.
-        float f1 = ((float)p + db1) * _freq_pbin;
-        float f2 = ((float)p + db2) * _freq_pbin;
-        int best = -1; float bd = 1e30f;
+        // ── Track: inherit phasors per component, nearest-frequency ───────
+        float f[3], r[3];
+        for (int i = 0; i < K; ++i) {
+            f[i] = ((float)p + db[i]) * _freq_pbin;
+            r[i] = _rot[p];
+        }
+        int best = -1; float bdst = 1e30f;
         for (int b = std::max(0, p - 2); b <= std::min(BINS - 1, p + 2); ++b)
             if (_pr_on[b]) {
-                const float d = std::abs(_pr_f1[b] - f1) + std::abs(_pr_f2[b] - f2);
-                const float dx = std::abs(_pr_f1[b] - f2) + std::abs(_pr_f2[b] - f1);
-                const float dm = std::min(d, dx);
-                if (dm < bd) { bd = dm; best = b; }
+                float d = 0;
+                for (int i = 0; i < K; ++i) {
+                    float dn = 1e30f;
+                    for (int j = 0; j < _pr_n[b]; ++j)
+                        dn = std::min(dn, std::abs(_pr_f[j][b] - f[i]));
+                    d += dn;
+                }
+                if (d < bdst) { bdst = d; best = b; }
             }
-        // Engagement hysteresis: starting a NEW pair demands a strong,
-        // unambiguous separation; an already-tracked pair may continue at
-        // the lower threshold — the borderline cases cannot flap between
-        // the parametric and rigid renderings frame to frame.
-        const bool tracked = (best >= 0 && bd < 4.0f * _freq_pbin);
-        if (!tracked && sep < 0.45f) PRONY_REJ(9);
+        // 2·fpb per component (the Spike-7 value): any looser and the
+        // tracks of two NEIGHBOURING regions (fundamentals 2-3 bins apart)
+        // cross-match and inherit each other's phasors — measured +7 dB on
+        // the chord's fundamentals.
+        const bool tracked = (best >= 0 && bdst < 2.0f * (float)K * _freq_pbin);
+        // Engagement hysteresis: a NEW pair demands an unambiguous
+        // separation; a tracked one may continue at the lower threshold.
+        if (!tracked && sep < 0.45f) return false;
         int cnt = 1;
-        float r1 = _rot[p], r2 = _rot[p];
         if (tracked) {
-            if (std::abs(_pr_f1[best] - f2) + std::abs(_pr_f2[best] - f1) <
-                std::abs(_pr_f1[best] - f1) + std::abs(_pr_f2[best] - f2)) {
-                std::swap(f1, f2);
-                std::swap(A, B);
-            }
-            f1 = _pr_f1[best] + 0.3f * (f1 - _pr_f1[best]);
-            f2 = _pr_f2[best] + 0.3f * (f2 - _pr_f2[best]);
-            r1 = _pr_r1[best];
-            r2 = _pr_r2[best];
             cnt = _pr_cnt[best] + 1;
+            bool used[3] = {};
+            for (int i = 0; i < K; ++i) {
+                int jn = -1; float dn = 1e30f;
+                for (int j = 0; j < _pr_n[best]; ++j) {
+                    if (used[j]) continue;
+                    const float d = std::abs(_pr_f[j][best] - f[i]);
+                    if (d < dn) { dn = d; jn = j; }
+                }
+                if (jn >= 0 && dn < 2.0f * _freq_pbin) {
+                    used[jn] = true;
+                    f[i] = _pr_f[jn][best] + 0.3f * (f[i] - _pr_f[jn][best]);
+                    r[i] = _pr_r[jn][best];
+                }
+            }
         }
-        // Probation: a pair renders only after 3 consecutive good fits —
-        // one-frame flukes never reach the output. While on probation the
-        // phasors stay synced to the rigid path's rotation, so the first
-        // rendered frame is phase-CONTINUOUS with what was playing.
+        // Probation: render only after 3 consecutive good fits; while on
+        // probation the phasors stay synced to the rigid path's rotation so
+        // the first rendered frame is phase-CONTINUOUS with what was playing.
         if (cnt < 3) {
-            _npr_f1[p] = f1; _npr_f2[p] = f2;
-            _npr_r1[p] = _rot[p]; _npr_r2[p] = _rot[p];
+            _npr_n[p] = K;
+            for (int i = 0; i < K; ++i) { _npr_f[i][p] = f[i]; _npr_r[i][p] = _rot[p]; }
             _npr_on[p] = true; _npr_cnt[p] = cnt;
             return false;
         }
         const float rc = 2.0f * float(M_PI) * HOP * (_ratio - 1.0f) / _sr;
-        r1 += rc * f1;
-        r1 -= 2.0f * float(M_PI) * std::round(r1 * float(M_1_PI) * 0.5f);
-        r2 += rc * f2;
-        r2 -= 2.0f * float(M_PI) * std::round(r2 * float(M_1_PI) * 0.5f);
-        _npr_f1[p] = f1; _npr_f2[p] = f2;
-        _npr_r1[p] = r1; _npr_r2[p] = r2;
+        for (int i = 0; i < K; ++i) {
+            r[i] += rc * f[i];
+            r[i] -= 2.0f * float(M_PI) * std::round(r[i] * float(M_1_PI) * 0.5f);
+        }
+        _npr_n[p] = K;
+        for (int i = 0; i < K; ++i) { _npr_f[i][p] = f[i]; _npr_r[i][p] = r[i]; }
         _npr_on[p] = true; _npr_cnt[p] = cnt;
         // Reverse handoff: keep the rigid path's rotation riding along the
-        // DOMINANT partial's phasor, so a later fallback frame resumes in
+        // DOMINANT component's phasor, so a later fallback frame resumes in
         // phase instead of jumping.
         {
-            const float rdom = (std::abs(A) >= std::abs(B)) ? r1 : r2;
-            for (int j = rlo; j < rhi; ++j) _rot[j] = rdom;
+            int idom = 0;
+            for (int i = 1; i < K; ++i)
+                if (std::abs(A[i]) > std::abs(A[idom])) idom = i;
+            for (int j = rlo; j < rhi; ++j) _rot[j] = r[idom];
         }
 #ifdef POGGED_PRONY_DEBUG
         ++dbg_engage;
-        if (!tracked) {
-            ++dbg_birth;
-            std::printf("[prony birth] p=%d db1=%+.2f db2=%+.2f sep=%.2f |A|=%.3g |B|=%.3g\n",
-                        p, db1, db2, sep, std::abs(A), std::abs(B));
-        }
+        if (cnt == 3) ++dbg_birth;
 #endif
-
-        // Synthesis: one analytic kernel per partial at its own ×ratio
-        // target, rotated by its own phasor, alternation restored like the
-        // rigid path does.
-        const struct { float f, r; std::complex<float> a; } part[2] = {
-            { f1, r1, A }, { f2, r2, B }
-        };
-        for (const auto& q : part) {
-            const float tb = q.f * _ratio / _freq_pbin;
-            const std::complex<float> ph = q.a * std::polar(1.0f, q.r);
+        // ── Synthesis: K analytic kernels, alternation restored ───────────
+        for (int i = 0; i < K; ++i) {
+            const float tb = f[i] * _ratio / _freq_pbin;
+            const std::complex<float> ph = A[i] * std::polar(1.0f, r[i]);
             const int d_lo = std::max(1, (int)std::ceil(tb - KW));
             const int d_hi = std::min(BINS - 2, (int)std::floor(tb + KW));
             for (int dst = d_lo; dst <= d_hi; ++dst) {
                 std::complex<float> v = ph * _kernel((float)dst - tb);
+                if (dst & 1) v = -v;
+                _cx[dst] += v;
+            }
+        }
+
+        // ── Residual hybrid (§23) ─────────────────────────────────────────
+        // Whatever the K-component model did NOT capture — chiefly each
+        // cluster's own beat sidebands — must not simply vanish (dropping
+        // it flattens the string's natural beat: measured +7 dB on a
+        // previously-good fundamental). The residual of the model at the
+        // analysis bins is translated RIGIDLY, exactly like the fallback
+        // path would translate the whole region: modeled carriers get exact
+        // placement, unmodeled fine structure keeps rigid quality.
+        {
+            for (int j = rlo; j < rhi; ++j) {
+                std::complex<float> pred = 0;
+                for (int i = 0; i < K; ++i)
+                    pred += A[i] * _kernel((float)(j - p) - db[i]);
+                _res[j] = _ana_cx[j] - pred;
+            }
+            const int   idom  = [&]{ int i0 = 0;
+                for (int i = 1; i < K; ++i)
+                    if (std::abs(A[i]) > std::abs(A[i0])) i0 = i;
+                return i0; }();
+            const std::complex<float> ph = std::polar(1.0f, r[idom]);
+            const float d_frac = (f[idom] / _freq_pbin) * (_ratio - 1.0f);
+            const int dst_lo = std::max(0, (int)std::ceil((float)rlo + d_frac));
+            const int dst_hi = std::min(BINS - 1,
+                                        (int)std::floor((float)(rhi - 1) + d_frac));
+            for (int dst = dst_lo; dst <= dst_hi; ++dst) {
+                const float sp = (float)dst - d_frac;
+                int j0 = (int)sp;
+                if (j0 >= rhi - 1) j0 = rhi - 2;
+                if (j0 < rlo) j0 = rlo;
+                const float t = std::min(1.0f, std::max(0.0f, sp - (float)j0));
+                std::complex<float> v = _res[j0] + t * (_res[j0 + 1] - _res[j0]);
+                v *= ph;
                 if (dst & 1) v = -v;
                 _cx[dst] += v;
             }
@@ -730,20 +875,19 @@ private:
     std::complex<float> _hist[PK][BINS] = {};
     int   _hist_idx             = 0;
     int   _warm                 = 0;
-    float _pr_f1[BINS]          = {};
-    float _pr_f2[BINS]          = {};
-    float _pr_r1[BINS]          = {};
-    float _pr_r2[BINS]          = {};
+    float _pr_f[3][BINS]        = {};
+    float _pr_r[3][BINS]        = {};
+    int   _pr_n[BINS]           = {};
     bool  _pr_on[BINS]          = {};
     int   _pr_cnt[BINS]         = {};
     int   _npr_cnt[BINS]        = {};
     float _mmax                 = 0.0f;
-    float _npr_f1[BINS]         = {};
-    float _npr_f2[BINS]         = {};
-    float _npr_r1[BINS]         = {};
-    float _npr_r2[BINS]         = {};
+    float _npr_f[3][BINS]       = {};
+    float _npr_r[3][BINS]       = {};
+    int   _npr_n[BINS]          = {};
     bool  _npr_on[BINS]         = {};
     float _kern[2 * KW * KOS + 1] = {};
+    std::complex<float> _res[BINS]  = {};   // §23 residual scratch
 
     float _swl[BINS]            = {};   // per-bin swell envelope (see set_swell)
     float _swell_c              = -1.0f;   // < 0 = swell off

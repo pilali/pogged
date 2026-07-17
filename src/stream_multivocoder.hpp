@@ -114,6 +114,11 @@ public:
         _lo.PRONY_ON = lo;
         _hi.PRONY_ON = hi;
     }
+    void prony_gates(float e1_new, float e1_trk) noexcept {
+        _lo.PRONY_E1_NEW = e1_new; _lo.PRONY_E1_TRK = e1_trk;
+        _hi.PRONY_E1_NEW = e1_new; _hi.PRONY_E1_TRK = e1_trk;
+    }
+    void prony_maxk(int k) noexcept { _lo.PRONY_MAX_K = k; _hi.PRONY_MAX_K = k; }
 
     // One shifted sample. Both sub-vocoders read the shared ring; the crossover
     // keeps the long path's lows and the short path's highs.
