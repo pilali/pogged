@@ -39,13 +39,25 @@
 // binary (the multi-resolution vocoder runs a long window for the bass and a
 // short one for the treble/attacks). The plain `StreamVocoder` alias at the end
 // keeps the historic single-window type — same behaviour as before.
-template <int N_>
+//
+// OS_ is the oversampling (overlap) factor: 4 = 75 % overlap (hop N/4, the
+// historic value), 8 = 87.5 % (hop N/8, §21) — denser frames at the SAME
+// window and latency, so the OLA averages 8 renderings instead of 4 and
+// frame-rate artifacts (topology flips, phase steps) are smoothed. Costs a
+// proportional factor of CPU: frames come twice as often.
+template <int N_, int OS_ = 4>
 class StreamVocoderT {
 public:
     static constexpr int N = N_;
-    static constexpr int HOP    = N / 4;        // 75 % overlap
+    static constexpr int HOP    = N / OS_;      // hop; OS_=4 -> 75 % overlap
     static constexpr int BINS   = N / 2 + 1;
     static constexpr int M      = N / 2;        // real-FFT complex size (§19)
+    // Estimator baseline, in hops (§21): the instantaneous-frequency estimate
+    // is a phase difference over EB hops. Densifying the frames (OS_ > 4)
+    // must NOT shorten that baseline — halving it doubles the estimate's
+    // wobble on merged pairs, which is the §16 shimmer engine. EB keeps the
+    // baseline at N/4 seconds' worth of hops for every overlap factor.
+    static constexpr int EB     = (OS_ > 4) ? OS_ / 4 : 1;
     static constexpr int OUTBUF = N * 4;        // ring buffer ≥ 2 × max unread
 
     // hop_phase staggers WHEN this instance does its FFT burst, in samples
@@ -56,7 +68,7 @@ public:
         _hop_phase = ((hop_phase % HOP) + HOP) % HOP;
         _sr        = static_cast<float>(sr);
         _freq_pbin = _sr / N;
-        _osamp     = static_cast<float>(N) / HOP;   // = 4
+        _osamp     = static_cast<float>(N) / HOP;   // = OS_
         for (int i = 0; i < N; i++)
             _win[i] = 0.5f * (1.0f - std::cos(2.0f * float(M_PI) * i / (N - 1)));
         // Twiddle tables (double-precision trig at init, no cost in process).
@@ -71,6 +83,7 @@ public:
 
     void reset() noexcept {
         std::memset(_ana_phase, 0, sizeof _ana_phase);
+        _ph_idx = 0;
         std::memset(_ana_mag,   0, sizeof _ana_mag);
         std::memset(_ana_freq,  0, sizeof _ana_freq);
         for (auto& c : _ana_cx) c = {};
@@ -159,31 +172,36 @@ private:
         }
 
         // ── Analysis: true instantaneous frequency per bin ─────────────────
+        // Phase difference over EB hops (the estimator baseline, see EB): the
+        // per-bin phase history ring holds the phase EB frames back.
         const float expct = 2.0f * float(M_PI) * HOP / N;
         for (int k = 0; k < BINS; k++) {
             float mag   = std::abs(_cx[k]);
             float phase = std::arg(_cx[k]);
 
-            float dp = phase - _ana_phase[k];
-            _ana_phase[k] = phase;
+            float dp = phase - _ana_phase[_ph_idx * BINS + k];
+            _ana_phase[_ph_idx * BINS + k] = phase;
 
             // Remove expected phase advance, wrap deviation to [-π, π]
-            dp -= k * expct;
+            dp -= k * expct * (float)EB;
             dp -= 2.0f * float(M_PI) * std::round(dp * float(M_1_PI) * 0.5f);
 
             _ana_mag[k]  = mag;
-            // dev(Hz) = dp/(2π) · sr/HOP = dp/(2π) · osamp · freq_pbin.
+            // dev(Hz) = dp/(2π) · sr/(EB·HOP) = dp/(2π) · (osamp/EB) · freq_pbin.
             // The original code dropped the 1/(2π): every instantaneous
             // frequency came out ~6.3× too far from its bin centre, which is
             // why the vocoder never reconstructed cleanly, shifts included.
             _ana_freq[k] = k * _freq_pbin
-                         + dp * _osamp * _freq_pbin * (float)(0.5 / M_PI);
+                         + dp * (_osamp / (float)EB) * _freq_pbin
+                              * (float)(0.5 / M_PI);
             // De-alternated complex spectrum for the fractional lobe
             // translation below: a Hann-windowed sinusoid carries a linear
             // phase of ~−π per bin (sign alternation); removing it makes the
             // lobe a SMOOTH complex curve that can be linearly interpolated.
             _ana_cx[k] = (k & 1) ? -_cx[k] : _cx[k];
         }
+
+        _ph_idx = (_ph_idx + 1) % EB;
 
         // ── Per-peak pitch shift (Laroche & Dolson 1999) ────────────────────
         // Each spectral peak (= one partial) is translated to its target
@@ -410,7 +428,8 @@ private:
     float _osamp     = 4.0f;
 
     float _win[N]               = {};
-    float _ana_phase[BINS]      = {};
+    float _ana_phase[EB * BINS] = {};   // phase history ring (see EB)
+    int   _ph_idx               = 0;
     float _ana_mag[BINS]        = {};
     float _ana_freq[BINS]       = {};
     std::complex<float> _ana_cx[BINS] = {};   // de-alternated analysis lobe

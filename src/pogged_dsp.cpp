@@ -19,7 +19,12 @@
 #ifdef POGGED_PV_N
 using PoggedVocoder = StreamVocoder;
 #else
-using PoggedVocoder = MultiVocoder<4096, 2048>;
+// OS=8 (§21): 87.5 % overlap — same windows, same latency, twice the frame
+// density, so the OLA averages 8 renderings and frame-rate artifacts smooth
+// out (chord worst case 74.5 -> 71.9 dB, no regression elsewhere once the
+// estimator baseline was decoupled from the hop). Costs 2x the FFT work —
+// affordable since the real FFT (§19).
+using PoggedVocoder = MultiVocoder<4096, 2048, 8>;
 // §20 — the LATENCY BUDGET is the spec. The user A/B'd every build of the
 // §13-§19 arc on the pedalboard and ruled: the 4096+2048 profile (85 ms
 // bass, 42 ms above the crossover) is the usable quality/latency point;

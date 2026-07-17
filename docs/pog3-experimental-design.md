@@ -1011,3 +1011,37 @@ crossover (paire 34 Hz) 37,7 → 27,6, moyenne accord neutre. Ratchet resserré
 42 ms — résiste aux leviers rapides : les espoirs restants sont l'overlap
 87,5 % (levier 3, CPU ×2 finançable) et la résynthèse paramétrique
 (levier 4, Spike 7).
+
+---
+
+## 21. Levier 3 — overlap 87,5 %, avec la base d'estimation découplée ✓
+
+Le hop passe de N/4 à N/8 (paramètre template `OS_`, fenêtres et latence
+STRICTEMENT inchangées) : l'OLA moyenne 8 rendus par échantillon au lieu de
+4, ce qui lisse les artefacts liés aux trames.
+
+**Le piège trouvé en route — et son correctif, qui est l'apport réel du
+levier :** densifier les trames raccourcissait la base de temps de
+l'estimateur de fréquence (différence de phase entre trames consécutives) →
+son wobble sur les paires fusionnées DOUBLAIT — mesuré : la paire de la
+bande de crossover régressait de 27,6 à 34,6 dB. Correctif : l'estimateur
+mesure désormais l'avance de phase sur **EB = OS/4 hops** (historique de
+phases en anneau) — base de temps constante (N/4 d'échantillons) quel que
+soit l'overlap. Avec ça :
+
+| Overlap | accord (moyenne/pire) | paire xover | CPU (8 voix, x86) |
+|---|---|---|---|
+| 75 % (OS=4) | +20,2 / +74,5 dB | 27,6 dB | 13,6 % |
+| **87,5 % (OS=8, expédié)** | **+19,6 / +71,9 dB** | **27,1 dB** | **26,5 % (p99 ~36 %)** |
+| 93,75 % (OS=16) | +17,8 / +68,2 dB | 27,2 dB | ~53 % — hors budget Pi |
+
+Gain modeste mais net et sans régression. Ratchet resserré (moyenne < 21,
+pire < 75). Le CPU expédié revient au niveau pré-rfft du §13, que le Pi
+tenait confortablement — à confirmer au bench sur l'appareil.
+
+**Bilan §20-§21 cumulé** (depuis le rebase 351591f-sur-HEAD) : pire cas
+accord 75,2 → 71,9 dB, bande de crossover 37,7 → 27,1 dB, ×4 43,5 → 31,2 dB,
+moyenne 20,2 → 19,6 dB. Les paires profondément fusionnées de la fenêtre
+courte restent le mur : c'est le domaine du Spike 7 (résynthèse
+paramétrique, §20 voie 4) — la seule voie restante vers un saut qualitatif
+à ce budget de latence.

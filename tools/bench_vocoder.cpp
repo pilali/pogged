@@ -84,7 +84,8 @@ int main()
                 BLOCK, SR / 1000.0f, DEADLINE_US);
     bench<StreamVocoderT<4096>>("single window 4096", in);
     bench<StreamVocoderT<2048>>("single window 2048", in);
-    bench<MultiVocoder<4096, 2048>>("multi-res 4096+2048", in);   // shipped (§20)
+    bench<MultiVocoder<4096, 2048>>("multi-res 4096+2048", in);
+    bench<MultiVocoder<4096, 2048, 8>>("multi-res 4096+2048 OS8", in);   // shipped (§21)
     bench<MultiVocoder<8192, 4096>>("multi-res 8192+4096", in);
     bench<MultiVocoder3<8192, 4096, 1024>>("3 bandes 8192/4096/1024", in);
     return 0;

@@ -26,14 +26,14 @@
 // ring interface intact: each sub-vocoder analyses the full band and we simply
 // discard the half we do not use. Same interface as StreamVocoder.
 
-template <int N_LO = 4096, int N_HI = 2048>
+template <int N_LO = 4096, int N_HI = 2048, int OS = 4>
 class MultiVocoder {
 public:
     static constexpr int   N     = N_LO;      // reported window (the long one)
     // Stagger stride, for interface parity with StreamVocoder: the caller
     // spreads its instances' FFT bursts over [0, HOP). The long window's hop
     // is the coarser grid; the short window folds the same phase into its own.
-    static constexpr int   HOP   = StreamVocoderT<N_LO>::HOP;
+    static constexpr int   HOP   = StreamVocoderT<N_LO, OS>::HOP;
     static constexpr float XOVER = 250.0f;    // crossover frequency, Hz
 
     void init(double sr, int hop_phase = 0) noexcept {
@@ -46,7 +46,7 @@ public:
         // the short window works, nothing about its sound (same invariant the
         // stagger relies on, pinned by stagger_test). Measured worst block for
         // 8 voices at 128 samples: 31% of the deadline in phase, 22% offset.
-        _hi.init(sr, hop_phase + StreamVocoderT<N_HI>::HOP / 2);
+        _hi.init(sr, hop_phase + StreamVocoderT<N_HI, OS>::HOP / 2);
         set_xover(_xover);
         reset();
     }
@@ -117,8 +117,8 @@ public:
     }
 
 private:
-    StreamVocoderT<N_LO> _lo;   // bass, resolved
-    StreamVocoderT<N_HI> _hi;   // treble + attacks, tight
+    StreamVocoderT<N_LO, OS> _lo;   // bass, resolved
+    StreamVocoderT<N_HI, OS> _hi;   // treble + attacks, tight
     Biquad _lp[4], _hp[4];      // LR8 crossover on the outputs (see set_xover)
     float  _sr    = 48000.0f;
     float  _xover = XOVER;      // output-side; see set_xover

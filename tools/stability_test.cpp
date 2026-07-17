@@ -80,7 +80,7 @@ int main()
     // at this crossover and stays asserted.
     static StreamVocoderT<4096>     vlong;
     static StreamVocoderT<2048>     v2048;
-    static MultiVocoder<4096, 2048> multi;
+    static MultiVocoder<4096, 2048, 8> multi;   // OS=8 as wired (§21)
     vlong.init(SR); v2048.init(SR); multi.init(SR);
     constexpr float XOUT = 250.0f;
     multi.set_xover(XOUT);
