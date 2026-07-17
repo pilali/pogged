@@ -98,6 +98,14 @@ public:
         _hi.set_swell(atk_ms);
     }
 
+    // §20 stability tuning, per window: the two windows sit in different
+    // resolution regimes (the long one partially resolves what the short one
+    // merges), so their best smoothing steps differ — measured, not assumed.
+    void tune(float lo_slow, float hi_slow) noexcept {
+        _lo.SMOOTH_SLOW = lo_slow;
+        _hi.SMOOTH_SLOW = hi_slow;
+    }
+
     // One shifted sample. Both sub-vocoders read the shared ring; the crossover
     // keeps the long path's lows and the short path's highs.
     float process(const float* ring, uint32_t mask, uint64_t wpos) noexcept {

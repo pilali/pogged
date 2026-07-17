@@ -423,6 +423,14 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // of spec. The short window rendering input partials it cannot
         // always resolve is the accepted §20 trade, tracked by shimmer_test.
         p->pv[v].set_xover(VOC_XOVER_OUT);
+        // §20 frequency smoothing: LONG window only. Measured on the full
+        // engine: smoothing the short window is stable-but-MISTUNED on its
+        // merged pairs, and that beats against the long window's correct
+        // rendering through the crossover skirt — worse than the wobble it
+        // removes. The long window's smoothing is free of that (its pairs
+        // are at least partially resolved) and cleans the crossover band
+        // (34 Hz pair: 37.7 -> 27.6 dB AM).
+        p->pv[v].tune(0.20f, 1.0f);
 #endif
     }
 #endif

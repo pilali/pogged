@@ -76,6 +76,8 @@ public:
         for (auto& c : _ana_cx) c = {};
         std::memset(_rot,       0, sizeof _rot);
         std::memset(_swl,       0, sizeof _swl);
+        std::memset(_trk_f,     0, sizeof _trk_f);
+        std::memset(_trk_on,    0, sizeof _trk_on);
         std::memset(_out_buf,   0, sizeof _out_buf);
         for (auto& c : _cx) c = {};
         _hop_cnt   = _hop_phase;   // NOT 0: a reset must not re-align the burst
@@ -97,6 +99,18 @@ public:
         if (atk_ms <= 1.0f) { _swell_c = -1.0f; return; }
         const float frames = atk_ms * 0.001f * _sr / HOP;
         _swell_c = (frames > 1.0f) ? std::exp(-std::log(9.0f) / frames) : 0.0f;
+    }
+
+    // §20 stability tunables — build-time knobs, not host-exposed. Kept as
+    // members (not constexpr) so the offline harnesses can sweep them; the
+    // defaults are the values frozen by the §20 sweep.
+    float PEAK_FLOOR  = 0.003f;   // drop peaks < this x frame max (~-50 dB)
+    float SMOOTH_SLOW = 0.20f;    // per-frame step on beat-wobble-sized moves
+    float SMOOTH_FAST = 0.75f;    // ...on real moves > SMOOTH_TH bins
+    float SMOOTH_TH   = 0.80f;    // fast/slow boundary, in bins
+
+    void tune(float floor_, float slow, float fast, float th) noexcept {
+        PEAK_FLOOR = floor_; SMOOTH_SLOW = slow; SMOOTH_FAST = fast; SMOOTH_TH = th;
     }
 
     // Returns one pitch-shifted sample. Call once per output sample.
@@ -193,6 +207,63 @@ private:
                 _peaks[n_peaks++] = j;
         }
 
+        // ── §20 stability levers (latency-free) ───────────────────────────
+        // An unresolved pair of partials (closer than the window's mainlobe)
+        // is the shimmer engine: the picker sees one peak or two depending on
+        // the beat phase, the merged lobe gets chopped into regions on the
+        // two-peak frames, and the frequency estimate wobbles at the beat
+        // rate, which the phasor integrates. Two counter-measures survived
+        // measurement (a trough-gated merge of shallow-valley peak pairs was
+        // tried and measured HARMFUL, like §16's blind absorption: the
+        // surviving peak alternates with the beat and the weak partial is
+        // mistuned while merged — see §20):
+
+        // (1) Relative peak floor: peaks below PEAK_FLOOR of the frame's
+        // strongest are noise-born phantoms; their regions would chop real
+        // lobes' skirts. The ENERGY at those bins is untouched — they simply
+        // join a real peak's region.
+        if (n_peaks > 0 && PEAK_FLOOR > 0.0f) {
+            float mmax = 0.0f;
+            for (int i = 0; i < n_peaks; ++i)
+                mmax = std::max(mmax, _ana_mag[_peaks[i]]);
+            const float floor_m = PEAK_FLOOR * mmax;
+            int w = 0;
+            for (int i = 0; i < n_peaks; ++i)
+                if (_ana_mag[_peaks[i]] >= floor_m) _peaks[w++] = _peaks[i];
+            n_peaks = w;
+        }
+
+        // (2) Two-speed per-track frequency smoothing: a merged pair's
+        // estimate swings at the beat rate, and integrating that swing into
+        // the phasor (and jittering d_frac) is audible FM. Match each peak
+        // to the nearest track of the previous frame (±2 bins) and smooth
+        // SLOWLY when the step is beat-wobble-sized, FAST when it is a real
+        // move (a bent string sweeps ~a bin per frame; wobble stays well
+        // under half a bin) — so bends keep tracking while wobble is tamed.
+        std::memset(_non, 0, sizeof _non);
+        for (int i = 0; i < n_peaks; ++i) {
+            const int   p  = _peaks[i];
+            const float fe = _ana_freq[p];
+            int best = -1; float bd = 1e30f;
+            for (int b = std::max(0, p - 2); b <= std::min(BINS - 1, p + 2); ++b)
+                if (_trk_on[b]) {
+                    const float d = std::abs(_trk_f[b] - fe);
+                    if (d < bd) { bd = d; best = b; }
+                }
+            float fs = fe;
+            if (best >= 0 && bd < 2.0f * _freq_pbin) {
+                const float a = (bd > SMOOTH_TH * _freq_pbin) ? SMOOTH_FAST
+                                                          : SMOOTH_SLOW;
+                fs = _trk_f[best] + a * (fe - _trk_f[best]);
+            }
+            _nf[p]  = fs;
+            _non[p] = true;
+        }
+        for (int b = 0; b < BINS; ++b) {
+            _trk_on[b] = _non[b];
+            if (_non[b]) _trk_f[b] = _nf[b];
+        }
+
         if (n_peaks == 0) {
             for (int k = 0; k < BINS; k++) _cx[k] = {};   // silent frame
         } else {
@@ -222,7 +293,7 @@ private:
             const float rot_c = 2.0f * float(M_PI) * HOP * (_ratio - 1.0f) / _sr;
             for (int i = 0; i < n_peaks; ++i) {
                 const int   p      = _peaks[i];
-                const float inc    = rot_c * _ana_freq[p];
+                const float inc    = rot_c * _nf[p];
                 const int   lo     = _bounds[i], hi = _bounds[i + 1];
                 for (int j = lo; j < hi; ++j) {
                     _rot[j] += inc;
@@ -230,7 +301,7 @@ private:
                                std::round(_rot[j] * float(M_1_PI) * 0.5f);
                 }
                 const std::complex<float> ph = std::polar(1.0f, _rot[p]);
-                const float d_frac = (_ana_freq[p] / _freq_pbin) * (_ratio - 1.0f);
+                const float d_frac = (_nf[p] / _freq_pbin) * (_ratio - 1.0f);
                 const int dst_lo = std::max(0, (int)std::ceil((float)lo + d_frac));
                 const int dst_hi = std::min(BINS - 1,
                                             (int)std::floor((float)(hi - 1) + d_frac));
@@ -344,6 +415,12 @@ private:
     float _ana_freq[BINS]       = {};
     std::complex<float> _ana_cx[BINS] = {};   // de-alternated analysis lobe
     float _rot[BINS]            = {};   // per-region rotation accumulators
+    // §20 stability state: per-track smoothed frequencies + merge hysteresis
+    float _trk_f[BINS]          = {};
+    float _nf[BINS]             = {};
+    bool  _trk_on[BINS]         = {};
+    bool  _non[BINS]            = {};
+
     float _swl[BINS]            = {};   // per-bin swell envelope (see set_swell)
     float _swell_c              = -1.0f;   // < 0 = swell off
     int   _peaks[BINS]          = {};   // per-frame peak list

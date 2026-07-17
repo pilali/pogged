@@ -979,3 +979,35 @@ Par ordre de rapport gain/effort, tout à latence constante :
 5. **Fenêtres asymétriques** (AAC-LD) : meilleure résolution à latence
    égale côté analyse. Recherche (le modèle de phase per-peak suppose la
    fenêtre symétrique).
+
+### §20 — leviers 1+2 : résultats mesurés (mitigés, l'essentiel résiste)
+
+Balayage levier par levier sur l'accord réaliste, moteur complet
+(4096+2048 @ 250) :
+
+| Levier | fenêtre longue seule | moteur complet |
+|---|---|---|
+| plancher de pics (−50 dB) | neutre | neutre (gardé : robustesse au bruit réel) |
+| **fusion gatée par vallée** | **+11,3/+71 dB — NUISIBLE, retirée** | — |
+| lissage de fréquence (α=0,20) | **+8,0 → +5,3 / +40 → +24 dB** ✓ | neutre sur l'accord |
+| lissage fenêtre courte | (aide isolément) | **nuisible via le crossover** |
+
+Deux leçons :
+1. **La fusion échoue pour la même raison que l'absorption du §16**, même
+   gatée par la vallée avec hystérésis : le pic survivant alterne au rythme
+   du battement quand les amplitudes sont proches, et le partiel faible est
+   désaccordé pendant les phases fusionnées.
+2. **Le lissage n'est bon que là où les paires sont au moins partiellement
+   résolues** (fenêtre longue). Sur les paires profondément fusionnées de la
+   fenêtre courte, il produit du stable-mais-désaccordé qui bat contre le
+   rendu juste de la fenêtre longue à travers la jupe du crossover — pire
+   que le wobble qu'il enlève. Expédié : `tune(0.20, 1.0)` — lissage sur la
+   longue seulement (+ garde-fou bend : pas rapide au-delà de 0,8 bin,
+   `warp_test` vert).
+
+**Net au budget fixé** : ×4 −6,5 dB, pire cas accord 75,2 → 74,5, bande de
+crossover (paire 34 Hz) 37,7 → 27,6, moyenne accord neutre. Ratchet resserré
+(pire < 78). Le mécanisme dominant — les paires fusionnées de la fenêtre de
+42 ms — résiste aux leviers rapides : les espoirs restants sont l'overlap
+87,5 % (levier 3, CPU ×2 finançable) et la résynthèse paramétrique
+(levier 4, Spike 7).

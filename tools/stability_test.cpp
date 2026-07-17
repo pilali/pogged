@@ -84,6 +84,7 @@ int main()
     vlong.init(SR); v2048.init(SR); multi.init(SR);
     constexpr float XOUT = 250.0f;
     multi.set_xover(XOUT);
+    multi.tune(0.20f, 1.0f);     // §20: long-window smoothing only, as wired
 
     bool ok = true;
     std::printf("══ shift stability on close partials (§15/§20) ══\n");

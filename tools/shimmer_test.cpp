@@ -125,10 +125,11 @@ int main()
     static MultiVocoder<4096, 2048> shipped;
     shipped.init(SR);
     shipped.set_xover(250.0f);
+    shipped.tune(0.20f, 1.0f);   // §20: long-window smoothing only, as wired
     const Excess s = excess(shipped, in, ideal);
-    const bool ok = s.mean < 22.0 && s.worst < 82.0;
+    const bool ok = s.mean < 22.0 && s.worst < 78.0;
     std::printf("  shipped 4096+2048 @ xout 250: excess AM mean %+.2f dB (< 22),"
-                " worst %+.1f dB (< 82)  [RATCHET, §20]%s\n",
+                " worst %+.1f dB (< 78)  [RATCHET, §20]%s\n",
                 s.mean, s.worst, ok ? "  ok" : "  ** FAIL");
 
     // The out-of-budget purity reference (§16), report-only.
