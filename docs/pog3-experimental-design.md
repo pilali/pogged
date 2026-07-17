@@ -575,15 +575,26 @@ moyenne** de la mono-fenêtre (531 vs 269 µs/bloc, ~20 % de deadline) et
 `hop_phase`, chaque rafale de la fenêtre longue tombait dans le même bloc
 qu'une rafale de la courte (HOP_LO multiple de HOP_HI) → pire bloc à 31 % ;
 la fenêtre courte est décalée d'un **demi-hop** (rien ne bouge au son, même
-invariant que le stagger) → 22 %. Sur Pi 5 (mono-fenêtre mesurée à 25 % de
-pire bloc sur l'appareil), le multi-res projette ~45-50 % : jouable, **à
-confirmer sur la machine** avant d'expédier.
+invariant que le stagger) → 22 %.
+
+**Pi 5 mesuré sur l'appareil (pistomp) ✓ — multi-res validé.** Trois passes
+par condition, 8 voix (le pire cas — `act[]` coupe les voix inactives) :
+
+| Condition | mono 4096, p99 | **multi-res, p99** |
+|---|---|---|
+| hôte audio arrêté | 15-17 % | **29-33 %** |
+| hôte lancé + jeu guitare | 28-36 % | **50-58 %** |
+
+Mieux que la projection (~45-50 % attendus à vide). La mesure « en charge »
+est un **plafond pessimiste** : le bench est un processus ordinaire, son p99
+inclut la préemption par le host temps-réel — que le plugin ne subit pas
+(il tourne DANS le thread RT du host). La contention réelle restante est la
+bande passante mémoire, quelque part entre les deux lignes. À l'écoute sur
+l'appareil : « résultat sonore très encourageant, progrès importants ».
 
 ### Reste à faire
 - **Réglage** : crossover (250 Hz), et l'écart de latence inter-bande (43 ms) —
   transparent à l'oreille pour l'instant ; à ré-écouter sur d'autres matières.
-- **Pi 5** : mesurer le pire bloc sur l'appareil (bench portable, voir
-  `tools/bench_vocoder.cpp`).
 
 ---
 
