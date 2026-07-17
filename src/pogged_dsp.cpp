@@ -12,31 +12,25 @@
 #ifndef POGGED_NO_VOCODER
 #include "stream_vocoder.hpp"
 #include "stream_multivocoder.hpp"
-// FOCUS's vocoder path. Multi-resolution (§13), sized for STABILITY first
-// (§16): two notes' partials collide (get closer than a window can resolve)
-// at every register, and an unresolved pair makes the per-peak translation
-// warble at the pair's beat rate — the "shimmer" heard on real chords. The
-// 8192 window resolves everything a chord throws below the crossover (mean
-// excess AM +1.4 dB vs the ideal shift on a realistic major third, against
-// +14.7 dB for 4096+2048); per-sample FFT cost only grows as log N, so this
-// costs ~9% over 4096+2048. The price is latency: ~171 ms below the
-// crossover, ~85 ms above, so the attack is softer than the 42 ms it briefly
-// had — the §12 transient-reinjection path is the planned reconciliation.
-// A target that pins POGGED_PV_N (the Duo X pins 2048 for CPU) keeps the
-// historic single window at that size instead.
+// FOCUS's vocoder path. Multi-resolution (§13): the long window resolves the
+// bass, the short one carries the treble and the attacks. A target that pins
+// POGGED_PV_N (the Duo X pins 2048 for CPU) keeps the historic single window
+// at that size instead.
 #ifdef POGGED_PV_N
 using PoggedVocoder = StreamVocoder;
 #else
-using PoggedVocoder = MultiVocoder<8192, 4096>;
-// Input-side crossover constant (§15/§16): the short window only ever carries
-// output made from input partials above this, where it resolves the
-// collisions that remain. NOT a 3-band ladder (§17, measured): every added
-// window costs a full engine per sample (~+50% CPU, past the Pi's budget)
-// and cannot lower the tonal core's latency anyway — collisions needing the
-// 8192 live everywhere below ~1200 Hz input, adjacent-scale-note
-// fundamentals included. The latency answer is the TIME split (§12/§16
-// transient reinjection), not more frequency bands.
-static constexpr float VOC_XOVER_IN = 1200.0f;
+using PoggedVocoder = MultiVocoder<4096, 2048>;
+// §20 — the LATENCY BUDGET is the spec. The user A/B'd every build of the
+// §13-§19 arc on the pedalboard and ruled: the 4096+2048 profile (85 ms
+// bass, 42 ms above the crossover) is the usable quality/latency point;
+// anything slower is out of spec. The 8192-based §16 shape measures far
+// cleaner on collisions (excess AM +1.4 vs +14.7 dB) but its 171/85 ms feel
+// failed the instrument test. So the windows and the FIXED output-side
+// 250 Hz crossover below are the §13 shape — while every latency-NEUTRAL
+// gain since is kept: LR8 crossover (§15), real FFT (§19), transient
+// reinjection (§18), per-bin swell (§14). Timbre stability within this
+// budget is the open §20 program; shimmer_test ratchets it.
+static constexpr float VOC_XOVER_OUT = 250.0f;
 #endif
 #endif
 #include "delay_line.hpp"
@@ -204,12 +198,9 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 //
 //              artifact over an ideal shift (sub, chord)   latency
 //   granular             +4.8 dB                            3 ms
-//   vocoder              +0.0 dB                           85 ms treble/attacks,
-//                                                          171 ms low-mids
-//                                                          (multi-res §13/§16;
-//                                                          single-window 42 ms
-//                                                          when POGGED_PV_N
-//                                                          pins 2048)
+//   vocoder              +0.0 dB                           42 ms above 250 Hz,
+//                                                          85 ms below
+//                                                          (multi-res §13/§20)
 //
 // The granular engine's aligner can only lock onto one periodicity, so a chord
 // — whose partials have incommensurable periods — makes its splices cancel
@@ -220,12 +211,12 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 // on every voice, because the granular engine's weakness is on the SUB — a
 // faithful +1/+2-only FOCUS would never reach the voice that needs it.
 //
-// Switching engines crossfades over ~250 ms: they have different latencies (3
-// vs up to 171 ms), so a hard switch would jump the signal, and the fade must
-// outlast the long window's OLA fill (~171 ms) so the vocoder ramps in from
+// Switching engines crossfades over ~150 ms: they have different latencies (3
+// vs up to 85 ms), so a hard switch would jump the signal, and the fade must
+// outlast the long window's OLA fill (~85 ms) so the vocoder ramps in from
 // real content rather than from its zero-padded start. Both engines run only
 // during the fade; at rest exactly one does.
-static constexpr float FOCUS_XFADE_MS = 250.0f;
+static constexpr float FOCUS_XFADE_MS = 150.0f;
 
 // ── Transient reinjection (§18) ──────────────────────────────────────────────
 // The wet's FELT latency is its attack's: the pitched body cannot arrive
@@ -426,11 +417,12 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
 #ifndef POGGED_PV_N
-        // Input-referred crossovers (§15): a voice at `ratio` puts an input
-        // partial at f on the output at ratio·f, so the output-side splits
-        // sit at VOC_XOVER_IN*×ratio. Nominal ratio on purpose: Warp/detune
-        // bend the pitch, not the crossover.
-        p->pv[v].set_xover(VOC_XOVER_IN * VOICE_RATIO[v]);
+        // Fixed output-side crossover (§20): the §15 input-referred rule
+        // (×ratio) is knowingly NOT applied — it would move the up voices'
+        // 250-1000 Hz output onto the long window, and that latency is out
+        // of spec. The short window rendering input partials it cannot
+        // always resolve is the accepted §20 trade, tracked by shimmer_test.
+        p->pv[v].set_xover(VOC_XOVER_OUT);
 #endif
     }
 #endif

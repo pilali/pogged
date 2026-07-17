@@ -924,3 +924,58 @@ Audit inchangé au bruit numérique près : le chemin est équivalent.
   (mod-host possède le thread RT ; un pool interne risque la contention
   avec les autres plugins). Dernier recours seulement — et avec la rfft,
   le budget actuel ne le réclame plus.
+
+---
+
+## 20. Le cahier des charges tranche : le budget de latence, et le programme « stabilité à budget fixé »
+
+A/B utilisateur sur tous les builds de l'arc §13-§19 : **la forme la plus
+utilisable est celle de `351591f`** — 4096+2048, crossover fixe à 250 Hz en
+sortie, soit 85 ms sous 250 Hz et 42 ms au-dessus. Au-delà de cette latence,
+on sort du cahier des charges : la pureté du 8192 (§16) ne vaut pas ses
+171 ms sur l'instrument. Décision actée.
+
+**Rebase sur HEAD, pas revert git** : le profil de latence de `351591f` est
+recâblé (`MultiVocoder<4096,2048>`, `VOC_XOVER_OUT = 250` fixe pour toutes
+les voix, FOCUS_XFADE 150 ms) en **gardant tous les acquis neutres en
+latence** : crossover LR8 (§15), swell par bin (§14), réinjection de
+transitoire (§18), FFT réelle (§19). Conséquence mesurable immédiate : la
+forme expédiée coûte **~13 % de deadline en moyenne** (rfft) au lieu des
+~29 % de `351591f`, et l'attaque wet-only arrive à ~0 ms (réinjection),
+corps tonal à ~44 ms.
+
+**La dette assumée, chiffrée et suivie en ratchet :** le crossover fixe à
+250 sortie remet aux voix up des partiels d'entrée non résolus par la
+fenêtre courte. `shimmer_test` passe en **ratchet** (accord réaliste :
+moyenne +20,2 dB < 22, pire +75,2 < 82 — tout travail doit faire baisser
+ces gates, rien ne peut régresser en silence) ; `stability_test` suit les
+cas up en report-only (×2 : 25,7 dB, ×4 : 43,5 dB) et continue d'asserter
+le sub (0,16 dB, input-safe).
+
+### Le programme §20 — stabilité du timbre à budget de latence fixé
+
+Par ordre de rapport gain/effort, tout à latence constante :
+
+1. **Fusion gatée par la profondeur de vallée** (nouveau, prometteur) : le
+   flip de topologie (§16) vient du picker qui voit un pic ou deux selon la
+   phase du battement. Décider par la **vallée entre pics** (peu profonde =
+   un lobe fusionné → une région, translation rigide quasi idéale ;
+   profonde = résolus → deux régions), avec hystérésis par piste. Contrairement
+   à l'absorption brute (mesurée pire, §16), ne désaccorde pas les paires
+   résolues.
+2. **Lissage de fréquence par piste** (prototypé §16 : 42 → 25 dB sur le
+   pire cas à 4096) + **plancher de pics** anti-fantômes. Garde-fou requis :
+   le lag sur bend (warp_test l'arbitre).
+3. **Overlap 87,5 %** (hop N/8) : trames deux fois plus denses, artefacts de
+   trame lissés. CPU ×2 — finançable depuis la rfft (13 → ~26 %). À mesurer.
+4. **Spike 7 — résynthèse paramétrique des régions fusionnées** : la vraie
+   sortie par le haut. La stabilité n'exige pas de SÉPARER l'énergie (Gabor
+   l'interdit), seulement des PARAMÈTRES stables — et l'estimation peut
+   utiliser la série temporelle des trames (Prony/ESPRIT d'ordre 2 sur ~6-8
+   trames) sans retarder le signal : latence d'estimation ≠ latence du
+   signal. Une région détectée bi-tonale est resynthétisée comme deux
+   noyaux de Hann aux fréquences cibles estimées, phases par piste.
+   Potentiel : la stabilité du 8192 au budget du 4096.
+5. **Fenêtres asymétriques** (AAC-LD) : meilleure résolution à latence
+   égale côté analyse. Recherche (le modèle de phase per-peak suppose la
+   fenêtre symétrique).

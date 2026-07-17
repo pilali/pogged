@@ -1,14 +1,13 @@
-// stability_test — pitch-shift STABILITY on close partials (design §15).
+// stability_test — pitch-shift STABILITY on close partials (§15/§20).
 //
-// The user's ear: the up voices sound slightly "vibrating". Cause found: the
-// multi-res crossover was OUTPUT-referred while resolution lives on the INPUT
-// side. A voice at `ratio` puts an input partial at f on the output at
-// ratio·f, so with a fixed 250 Hz output crossover the +1 voice hands the
-// short window output down to 250 Hz — input partials down to 125 Hz, which
-// its 23 Hz bins cannot separate on a chord: their lobes merge, the peaks
-// beat, the translation warbles. Fix: cross at XOVER×ratio for up voices
-// (input-referred), which is what pogged_dsp wires. The down voices already
-// satisfy the constraint at 250 (output 250 = input 500) and are unchanged.
+// §15 found the mechanism: with a fixed 250 Hz OUTPUT crossover, the up
+// voices' short window renders input partials down to 125 Hz that its bins
+// cannot separate on a chord — their lobes merge, the peaks beat, the
+// translation warbles. The §15 fix (input-referred crossover, ×ratio) cures
+// it but moves the up voices' low-mids onto the long window — LATENCY the
+// user ruled out of spec (§20). So the shipped shape keeps the fixed 250 Hz
+// crossover, the up cases are REPORT-ONLY tracked numbers (the §20 program's
+// target), and the input-safe sub path stays asserted.
 //
 // Material: two partials 34 Hz apart (C3+E3 — an ordinary guitar voicing),
 // or 43 Hz apart for the sub case. Metric: per-OUTPUT-partial amplitude
@@ -73,33 +72,34 @@ static double am_depth(Engine& eng, float ratio, float f1, float f2)
 int main()
 {
     // Static: each engine instance owns large buffers, keep them off the stack.
-    // The multi mirrors the shipped shape (PoggedVocoder in pogged_dsp.cpp):
-    // 8192+4096 crossed at 1200 Hz input-side.
-    static StreamVocoderT<8192>     vlong;
+    // The shipped §20 shape: 4096+2048, FIXED 250 Hz output crossover — the
+    // latency budget the user ruled usable (85/42 ms). The up voices' short
+    // window therefore renders input partials down to 125 Hz that it cannot
+    // always resolve: those cases are REPORT-ONLY tracked numbers (the §20
+    // stability program's target), not asserts. The sub path is input-safe
+    // at this crossover and stays asserted.
+    static StreamVocoderT<4096>     vlong;
     static StreamVocoderT<2048>     v2048;
-    static MultiVocoder<8192, 4096> multi;
+    static MultiVocoder<4096, 2048> multi;
     vlong.init(SR); v2048.init(SR); multi.init(SR);
-    constexpr float XIN = 1200.0f;
+    constexpr float XOUT = 250.0f;
+    multi.set_xover(XOUT);
 
     bool ok = true;
-    std::printf("══ shift stability on close partials (§15) ══\n");
+    std::printf("══ shift stability on close partials (§15/§20) ══\n");
 
-    // The up voices, on the C3+E3 pair (34 Hz apart). Crossovers as wired in
-    // pogged_dsp: XIN×ratio, input-referred.
+    // The up voices, on the C3+E3 pair (34 Hz apart) — the §20 budget trade,
+    // tracked: lower is better, the long-window floor is the reference.
     for (float ratio : { 2.0f, 4.0f }) {
-        multi.set_xover(XIN * ratio);
         const double m  = am_depth(multi, ratio, 130.81f, 164.81f);
         const double s4 = am_depth(vlong, ratio, 130.81f, 164.81f);
-        const bool this_ok = m < 0.5;
-        ok &= this_ok;
         std::printf("  x%g on C3+E3 (34 Hz apart): multi %.2f dB AM "
-                    "(long-window floor %.2f, < 0.5)%s\n",
-                    ratio, m, s4, this_ok ? "  ok" : "  ** FAIL");
+                    "(long-window floor %.2f)  [REPORT-ONLY, §20 budget]\n",
+                    ratio, m, s4);
     }
 
-    // The sub, on a pair 43 Hz apart.
+    // The sub, on a pair 43 Hz apart (input 165-208 Hz -> long window).
     {
-        multi.set_xover(XIN * 0.5f);
         const double m = am_depth(multi, 0.5f, 164.81f, 207.65f);
         const bool this_ok = m < 0.5;
         ok &= this_ok;
@@ -107,9 +107,9 @@ int main()
                     m, this_ok ? "  ok" : "  ** FAIL");
     }
 
-    // The counterexample that justifies the input-referred rule, kept visible:
-    // a short window handed input partials it cannot resolve.
-    std::printf("  [counterexample, report-only] x2 on C3+E3 through a bare "
+    // The bare short window, for scale: what the up voices' 250-500 Hz
+    // output region rides on under the §20 budget.
+    std::printf("  [reference, report-only] x2 on C3+E3 through a bare "
                 "2048 window: %.1f dB AM\n",
                 am_depth(v2048, 2.0f, 130.81f, 164.81f));
 

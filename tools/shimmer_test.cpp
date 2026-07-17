@@ -116,24 +116,27 @@ int main()
 
     std::printf("══ shimmer on a realistic major third, x2 (§16) ══\n");
 
-    // The shipped shape (mirrors PoggedVocoder + the input-referred wiring).
-    static MultiVocoder<8192, 4096> shipped;
+    // The shipped §20 shape: 4096+2048 at the fixed 250 Hz output crossover
+    // — the latency budget the user ruled usable. Its collision shimmer is
+    // the §20 program's target: the gates are a RATCHET set just above
+    // today's measurement, so any stability work must move them DOWN and
+    // nothing may quietly regress. The 8192 shape is kept as the purity
+    // reference — what §16 measured when latency was free.
+    static MultiVocoder<4096, 2048> shipped;
     shipped.init(SR);
-    shipped.set_xover(1200.0f * 2.0f);
+    shipped.set_xover(250.0f);
     const Excess s = excess(shipped, in, ideal);
-    // Gates from the §16 sweep, with margin: mean is the perceptual carpet
-    // (measured 1.4), worst is the unresolvable 4.5 Hz pair (measured 20).
-    const bool ok = s.mean < 2.5 && s.worst < 25.0;
-    std::printf("  shipped 8192+4096 @ xin 1200: excess AM mean %+.2f dB (< 2.5),"
-                " worst %+.1f dB (< 25)%s\n",
+    const bool ok = s.mean < 22.0 && s.worst < 82.0;
+    std::printf("  shipped 4096+2048 @ xout 250: excess AM mean %+.2f dB (< 22),"
+                " worst %+.1f dB (< 82)  [RATCHET, §20]%s\n",
                 s.mean, s.worst, ok ? "  ok" : "  ** FAIL");
 
-    // The architecture this replaced, kept visible as the counterexample.
-    static MultiVocoder<4096, 2048> old;
-    old.init(SR);
-    old.set_xover(250.0f * 2.0f);
-    const Excess o = excess(old, in, ideal);
-    std::printf("  [counterexample, report-only] 4096+2048 @ xin 250: "
+    // The out-of-budget purity reference (§16), report-only.
+    static MultiVocoder<8192, 4096> pure;
+    pure.init(SR);
+    pure.set_xover(1200.0f * 2.0f);
+    const Excess o = excess(pure, in, ideal);
+    std::printf("  [reference, report-only] 8192+4096 @ xin 1200 (171/85 ms): "
                 "mean %+.2f dB, worst %+.1f dB\n", o.mean, o.worst);
 
     std::printf("shimmer_test: %s\n", ok ? "PASS" : "FAIL");
