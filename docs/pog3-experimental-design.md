@@ -743,3 +743,78 @@ suivi de partiels + lissage de fréquence par piste (le jitter d'estimation
 sur corde réelle, toutes voix) ; fenêtre à lobes plus bas (Blackman-Harris)
 sur le chemin court ; overlap 87,5 % (CPU ×2) ; PGHI (Průša-Holighaus 2017)
 en chantier de fond.
+
+---
+
+## 16. Spike 6 — le scintillement : les collisions d'harmoniques, et la fenêtre qui les résout
+
+Retour d'écoute après le §15 : *le scintillement persiste, attack et détune à
+zéro — même plus flagrant sans swell* (logique : le swell par bin lisse les
+montées, il masquait une partie du défaut). Chasse méthodique, sonde par
+sonde :
+
+**1. Une corde seule ne scintille pas.** Corde réaliste synthétique
+(inharmonicité de raideur, battements des deux polarisations par mode,
+plancher de bruit) : excès d'AM ≤ 0,3 dB sur les trois moteurs. Éliminé :
+le jitter d'estimation sur note isolée.
+
+**2. Le scintillement est polyphonique : les COLLISIONS d'harmoniques.**
+Tierce majeure la2+do#3 réaliste, ×2, excès d'AM par harmonique vs le shift
+idéal (même générateur, f0 doublées) : h4 de la2 est à 24 Hz du h3 de do#3
+(2 bins à 4096 — non résolu), h5 de la2 à 4,5 Hz du h4 de do#3. Une paire non
+résolue fait osciller l'estimation du pic fusionné au rythme du battement ;
+et quand le picker la résout par intermittence, les lobes recouverts sont
+**découpés** en régions translatées à des offsets différents. Mesuré :
+mono 4096 pire cas **+42 dB**, moyenne **+8 dB**. C'est le scintillement.
+
+**3. Les micro-correctifs ne suffisent pas — mesurés et écartés :**
+- *lissage de fréquence par piste* : 42 → 25 dB pire cas — aide, ne tue pas ;
+- *absorption des pics proches* (jamais deux régions par lobe) : **pire**
+  (+71 dB) — le partiel faible devient stable mais **désaccordé** de
+  (ratio−1)·Δf ;
+- *persistance de pistes naissance/mort* (topologie stable) : marginal —
+  le découpage des lobes recouverts reste.
+
+**4. La seule issue frame-based : résoudre davantage.** C'est Gabor, en
+face : | fenêtre | excès moyen | pire cas | latence |
+|---|---|---|---|
+| 4096 | +8,0 dB | +42 dB | 85 ms |
+| **8192** | **+1,2 dB** | +14 dB | 171 ms |
+| 16384 | +2,1 dB | +13 dB | 341 ms (le temps étale les battements — PIRE) |
+
+**8192 est l'optimum** : il résout tout ce qu'un accord de guitare produit,
+sauf les paires sub-bin (4,5 Hz → il faudrait 850 ms) que l'idéal fait battre
+aussi. Et le coût par échantillon ne croît qu'en **log N** : +8 %.
+
+**5. Les collisions vivent à TOUS les registres** (la2 h9 = 2004 Hz contre
+do#3 h7 = 1965 Hz…) — le split fréquentiel ne peut donc pas garder une
+fenêtre courte quelque part sans y scintiller. Balayage d'architectures
+(même matériau) :
+
+| Architecture (xin = crossover d'entrée) | excès moyen | pire cas |
+|---|---|---|
+| 4096+2048, xin 250 (expédié §15) | +14,7 dB | +77 dB |
+| 8192+2048, xin 600 | +5,6 dB | +36 dB |
+| 8192+4096, xin 700 | +2,5 dB | +23 dB |
+| **8192+4096, xin 1200 (retenu)** | **+1,4 dB** | **+20 dB** |
+| mono 8192 (plafond) | +1,2 dB | +14 dB |
+
+**Retenu : `MultiVocoder<8192, 4096>`, crossover d'entrée 1200 Hz**
+(`VOC_XOVER_IN`), gardé par `shimmer_test` (gates : moyenne < 2,5, pire < 25)
+et `stability_test` mis à jour. FOCUS_XFADE porté à 250 ms (remplissage OLA
+du 8192). **Le prix, assumé et à trancher à l'oreille : attaques 42 → 85 ms,
+graves/médiums 85 → 171 ms.** C'est l'arbitrage stabilité/mordant — le
+scintillement était le défaut signalé, la stabilité gagne ce round.
+
+**CPU** : moyenne +6 % vs 4096+2048 (log N) ; mais le **pire bloc** monte à
+~3,2× la mono-fenêtre (une trame 8192 = 2 FFT de 8192 dans un bloc) —
+projection Pi 5 ~50 % de deadline à vide, **à re-mesurer sur l'appareil**.
+Si trop chaud : FFT réelle (rfft, travail ÷2) est le levier suivant.
+
+### La réconciliation attaque/stabilité — prochain spike
+Le split **fréquentiel** ne peut pas donner les deux ; le split **temporel**
+si : tout le stationnaire dans les fenêtres longues (propre, stable), et les
+transitoires par un chemin court dédié — la **réinjection de transitoire**
+du §12 (tentative 2), déclenchée par l'`OnsetDetector` existant, alignée sur
+la latence du wet. Sur la pédale, le dry joue déjà ce rôle ; la réinjection
+sert les presets wet-only et le mordant des voix elles-mêmes.

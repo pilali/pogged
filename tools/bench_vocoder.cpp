@@ -85,5 +85,6 @@ int main()
     bench<StreamVocoderT<4096>>("single window 4096", in);
     bench<StreamVocoderT<2048>>("single window 2048", in);
     bench<MultiVocoder<4096, 2048>>("multi-res 4096+2048", in);
+    bench<MultiVocoder<8192, 4096>>("multi-res 8192+4096", in);   // shipped (§16)
     return 0;
 }

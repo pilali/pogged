@@ -73,31 +73,33 @@ static double am_depth(Engine& eng, float ratio, float f1, float f2)
 int main()
 {
     // Static: each engine instance owns large buffers, keep them off the stack.
-    static StreamVocoderT<4096>     v4096;
+    // The multi mirrors the shipped shape (PoggedVocoder in pogged_dsp.cpp):
+    // 8192+4096 crossed at 1200 Hz input-side.
+    static StreamVocoderT<8192>     vlong;
     static StreamVocoderT<2048>     v2048;
-    static MultiVocoder<4096, 2048> multi;
-    v4096.init(SR); v2048.init(SR); multi.init(SR);
+    static MultiVocoder<8192, 4096> multi;
+    vlong.init(SR); v2048.init(SR); multi.init(SR);
+    constexpr float XIN = 1200.0f;
 
     bool ok = true;
     std::printf("══ shift stability on close partials (§15) ══\n");
 
     // The up voices, on the C3+E3 pair (34 Hz apart). Crossovers as wired in
-    // pogged_dsp: XOVER×ratio, input-referred.
+    // pogged_dsp: XIN×ratio, input-referred.
     for (float ratio : { 2.0f, 4.0f }) {
-        multi.set_xover(MultiVocoder<>::XOVER * std::max(1.0f, ratio));
+        multi.set_xover(XIN * ratio);
         const double m  = am_depth(multi, ratio, 130.81f, 164.81f);
-        const double s4 = am_depth(v4096, ratio, 130.81f, 164.81f);
+        const double s4 = am_depth(vlong, ratio, 130.81f, 164.81f);
         const bool this_ok = m < 0.5;
         ok &= this_ok;
         std::printf("  x%g on C3+E3 (34 Hz apart): multi %.2f dB AM "
-                    "(4096 floor %.2f, < 0.5)%s\n",
+                    "(long-window floor %.2f, < 0.5)%s\n",
                     ratio, m, s4, this_ok ? "  ok" : "  ** FAIL");
     }
 
-    // The sub, on a pair 43 Hz apart — already input-safe at 250, pinned so
-    // it stays that way.
+    // The sub, on a pair 43 Hz apart.
     {
-        multi.set_xover(MultiVocoder<>::XOVER);
+        multi.set_xover(XIN * 0.5f);
         const double m = am_depth(multi, 0.5f, 164.81f, 207.65f);
         const bool this_ok = m < 0.5;
         ok &= this_ok;
@@ -105,12 +107,11 @@ int main()
                     m, this_ok ? "  ok" : "  ** FAIL");
     }
 
-    // The counterexamples that justify the rule, kept visible:
-    multi.set_xover(MultiVocoder<>::XOVER);           // output-referred (bug)
-    std::printf("  [counterexamples, report-only] x2 on C3+E3: "
-                "short window alone %.1f dB AM, multi at fixed 250 %.1f dB AM\n",
-                am_depth(v2048, 2.0f, 130.81f, 164.81f),
-                am_depth(multi, 2.0f, 130.81f, 164.81f));
+    // The counterexample that justifies the input-referred rule, kept visible:
+    // a short window handed input partials it cannot resolve.
+    std::printf("  [counterexample, report-only] x2 on C3+E3 through a bare "
+                "2048 window: %.1f dB AM\n",
+                am_depth(v2048, 2.0f, 130.81f, 164.81f));
 
     std::printf("stability_test: %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;

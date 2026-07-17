@@ -12,16 +12,27 @@
 #ifndef POGGED_NO_VOCODER
 #include "stream_vocoder.hpp"
 #include "stream_multivocoder.hpp"
-// FOCUS's vocoder path. Multi-resolution by default (§13): the long window
-// resolves the bass, the short one carries the treble and the attacks, so the
-// pitched voices sit ~42 ms under the dry instead of ~85 while low chords stay
-// resolved. Costs ~1.5x the FFT work per voice — a target that pins
-// POGGED_PV_N (the Duo X pins 2048 for CPU) keeps the historic single window
-// at that size instead.
+// FOCUS's vocoder path. Multi-resolution (§13), sized for STABILITY first
+// (§16): two notes' partials collide (get closer than a window can resolve)
+// at every register, and an unresolved pair makes the per-peak translation
+// warble at the pair's beat rate — the "shimmer" heard on real chords. The
+// 8192 window resolves everything a chord throws below the crossover (mean
+// excess AM +1.4 dB vs the ideal shift on a realistic major third, against
+// +14.7 dB for 4096+2048); per-sample FFT cost only grows as log N, so this
+// costs ~9% over 4096+2048. The price is latency: ~171 ms below the
+// crossover, ~85 ms above, so the attack is softer than the 42 ms it briefly
+// had — the §12 transient-reinjection path is the planned reconciliation.
+// A target that pins POGGED_PV_N (the Duo X pins 2048 for CPU) keeps the
+// historic single window at that size instead.
 #ifdef POGGED_PV_N
 using PoggedVocoder = StreamVocoder;
 #else
-using PoggedVocoder = MultiVocoder<4096, 2048>;
+using PoggedVocoder = MultiVocoder<8192, 4096>;
+// Input-side crossover constant (§15/§16): the short window only ever carries
+// output made from input partials above this, where its 11.7 Hz bins resolve
+// the collisions that remain. Swept on the shimmer material: 700 Hz leaves
+// +2.5 dB mean excess, 1200 reaches +1.4 (ceiling 1.2), higher buys nothing.
+static constexpr float VOC_XOVER_IN = 1200.0f;
 #endif
 #endif
 #include "delay_line.hpp"
@@ -189,11 +200,12 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 //
 //              artifact over an ideal shift (sub, chord)   latency
 //   granular             +4.8 dB                            3 ms
-//   vocoder              +0.0 dB                           42 ms treble/attacks,
-//                                                          85 ms bass (multi-res
-//                                                          §13; single-window
-//                                                          85 ms when POGGED_PV_N
-//                                                          pins one size)
+//   vocoder              +0.0 dB                           85 ms treble/attacks,
+//                                                          171 ms low-mids
+//                                                          (multi-res §13/§16;
+//                                                          single-window 42 ms
+//                                                          when POGGED_PV_N
+//                                                          pins 2048)
 //
 // The granular engine's aligner can only lock onto one periodicity, so a chord
 // — whose partials have incommensurable periods — makes its splices cancel
@@ -204,10 +216,12 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 // on every voice, because the granular engine's weakness is on the SUB — a
 // faithful +1/+2-only FOCUS would never reach the voice that needs it.
 //
-// Switching engines crossfades over ~150 ms: they have different latencies (3
-// vs 85 ms), so a hard switch would jump the signal. Both engines run only
+// Switching engines crossfades over ~250 ms: they have different latencies (3
+// vs up to 171 ms), so a hard switch would jump the signal, and the fade must
+// outlast the long window's OLA fill (~171 ms) so the vocoder ramps in from
+// real content rather than from its zero-padded start. Both engines run only
 // during the fade; at rest exactly one does.
-static constexpr float FOCUS_XFADE_MS = 150.0f;
+static constexpr float FOCUS_XFADE_MS = 250.0f;
 
 // ── Freeze + Gliss ───────────────────────────────────────────────────────────
 // The pedal's position sets the glide rate, "the closer the pedal is to the toe
@@ -390,13 +404,12 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
 #ifndef POGGED_PV_N
-        // Input-referred crossover (§15): the short window may only carry
-        // output made from input partials it can resolve (> ~XOVER Hz), so an
-        // up voice crosses at XOVER×ratio (500 Hz for +1, 1 kHz for +2). The
-        // down voices already satisfy that at XOVER — unchanged. Nominal
-        // ratio on purpose: Warp/detune bend the pitch, not the crossover.
-        p->pv[v].set_xover(PoggedVocoder::XOVER *
-                           std::max(1.0f, VOICE_RATIO[v]));
+        // Input-referred crossover (§15): a voice at `ratio` puts an input
+        // partial at f on the output at ratio·f, so the output-side split
+        // sits at VOC_XOVER_IN×ratio — 2.4 kHz for +1, 600 Hz for the sub.
+        // Nominal ratio on purpose: Warp/detune bend the pitch, not the
+        // crossover.
+        p->pv[v].set_xover(VOC_XOVER_IN * VOICE_RATIO[v]);
 #endif
     }
 #endif
