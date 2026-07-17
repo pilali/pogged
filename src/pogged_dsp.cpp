@@ -11,6 +11,18 @@
 #include "stream_shifter.hpp"
 #ifndef POGGED_NO_VOCODER
 #include "stream_vocoder.hpp"
+#include "stream_multivocoder.hpp"
+// FOCUS's vocoder path. Multi-resolution by default (§13): the long window
+// resolves the bass, the short one carries the treble and the attacks, so the
+// pitched voices sit ~42 ms under the dry instead of ~85 while low chords stay
+// resolved. Costs ~1.5x the FFT work per voice — a target that pins
+// POGGED_PV_N (the Duo X pins 2048 for CPU) keeps the historic single window
+// at that size instead.
+#ifdef POGGED_PV_N
+using PoggedVocoder = StreamVocoder;
+#else
+using PoggedVocoder = MultiVocoder<4096, 2048>;
+#endif
 #endif
 #include "delay_line.hpp"
 #include "freeze_loop.hpp"
@@ -177,7 +189,11 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 //
 //              artifact over an ideal shift (sub, chord)   latency
 //   granular             +4.8 dB                            3 ms
-//   vocoder              +0.0 dB                           85 ms
+//   vocoder              +0.0 dB                           42 ms treble/attacks,
+//                                                          85 ms bass (multi-res
+//                                                          §13; single-window
+//                                                          85 ms when POGGED_PV_N
+//                                                          pins one size)
 //
 // The granular engine's aligner can only lock onto one periodicity, so a chord
 // — whose partials have incommensurable periods — makes its splices cancel
@@ -219,7 +235,7 @@ struct PoggedDsp {
     StreamShifter sh[N_VOICES];
     bool          sh_live[N_VOICES] = {};   // false ⇒ needs reset before reuse
 #ifndef POGGED_NO_VOCODER
-    StreamVocoder pv[N_VOICES];
+    PoggedVocoder pv[N_VOICES];
     bool          pv_live[N_VOICES] = {};
 #endif
     float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
@@ -371,7 +387,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     // in any given audio block, instead of all N_VOICES colliding every HOP
     // samples. Same work, same sound — it is only *when* each voice computes.
     for (int v = 0; v < N_VOICES; ++v) {
-        p->pv[v].init(sample_rate, v * (StreamVocoder::HOP / N_VOICES));
+        p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
     }
 #endif

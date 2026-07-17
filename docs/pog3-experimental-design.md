@@ -552,15 +552,36 @@ il garde la résolution grave de la fenêtre longue. Transposition juste à trav
 le crossover. **À l'oreille : le mix multi est le meilleur des trois** (attaque
 du 2048 + grave du 4096).
 
+### Intégré ✓
+
+`MultiVocoder<4096, 2048>` **est** désormais le chemin Focus=vocodeur de
+`pogged_dsp.cpp` (alias `PoggedVocoder`) : Focus reste binaire, les voix
+passent à 42 ms sous le dry pour les aigus/attaques, 85 ms pour le grave.
+Les cibles contraintes gardent leur réglage : `POGGED_PV_N` (Duo X, 2048)
+retombe sur la mono-fenêtre historique, `POGGED_NO_VOCODER` (Dwarf) compile
+toujours tout le chemin out. Le swell par bin (§14) est hérité par les deux
+fenêtres (`set_swell` transmis, même constante en ms donc crossover cohérent) ;
+`focus_test` passe à +0,2 dB du plancher idéal (le prix du crossover, asserté
+< 1,0) et la tenue de A dans `polyswell_test` va de −0,75 à −1,6 dB (les bins
+plus larges de la fenêtre courte laissent le transitoire mordre un peu plus —
+sous les −2 dB assertés).
+
+**Coût CPU mesuré** (`tools/bench_vocoder.cpp`, hors audit — dépendant de la
+machine ; 8 voix, blocs de 128 à 48 kHz) : sur x86, multi-res **2,0× la
+moyenne** de la mono-fenêtre (531 vs 269 µs/bloc, ~20 % de deadline) et
+**p99 ~22 %** contre ~12 %. Piège trouvé et corrigé : avec le même
+`hop_phase`, chaque rafale de la fenêtre longue tombait dans le même bloc
+qu'une rafale de la courte (HOP_LO multiple de HOP_HI) → pire bloc à 31 % ;
+la fenêtre courte est décalée d'un **demi-hop** (rien ne bouge au son, même
+invariant que le stagger) → 22 %. Sur Pi 5 (mono-fenêtre mesurée à 25 % de
+pire bloc sur l'appareil), le multi-res projette ~45-50 % : jouable, **à
+confirmer sur la machine** avant d'expédier.
+
 ### Reste à faire
 - **Réglage** : crossover (250 Hz), et l'écart de latence inter-bande (43 ms) —
   transparent à l'oreille pour l'instant ; à ré-écouter sur d'autres matières.
-- **Intégration** : brancher `MultiVocoder` dans `pogged_dsp.cpp`. Option simple
-  — **remplacer** le chemin vocodeur par le multi-res (Focus reste binaire,
-  granulaire/vocodeur), au prix de ~1,5× le coût FFT par voix (2 FFT au lieu
-  d'1). À peser pour Pi/MOD ; le Dwarf compile déjà le vocodeur out.
-- **Coût CPU** : mesurer le pire bloc (le stagger existant aide, mais il y a 2×
-  plus de rafales FFT).
+- **Pi 5** : mesurer le pire bloc sur l'appareil (bench portable, voir
+  `tools/bench_vocoder.cpp`).
 
 ---
 
