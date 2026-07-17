@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <vector>
 #include <algorithm>
+#include <complex>
 
 static constexpr float    SR  = 48000.0f;
 static constexpr uint32_t RSZ = 65536, MASK = RSZ - 1;
@@ -82,6 +83,37 @@ static double am_db(const std::vector<float>& x, float f)
     return 20.0 * std::log10(hi / (lo + 1e-30));
 }
 
+// Roughness (§23): modulation-index in the 5-80 Hz band of each harmonic's
+// envelope — the band the ear reads as flutter/shimmer. Our AM metric's
+// 100 ms window averages that away, and twice in this project the ear
+// caught what AM missed; this is the second guardrail.
+static double mod_index(const std::vector<float>& x, double f)
+{
+    const int n = (int)x.size();
+    const int i0 = (int)(1.5 * SR), i1 = n - (int)(0.2 * SR);
+    const double a = 1.0 - std::exp(-2.0 * M_PI * 80.0 / SR);
+    std::complex<double> lp = 0.0;
+    const int DEC = 16;
+    std::vector<double> env;
+    env.reserve((i1 - i0) / DEC + 1);
+    for (int i = i0; i < i1; ++i) {
+        const double t = i / (double)SR;
+        lp += a * ((double)x[i] * std::exp(std::complex<double>(0.0,
+                     -2.0 * M_PI * f * t)) - lp);
+        if ((i - i0) % DEC == 0) env.push_back(std::abs(lp));
+    }
+    const double fs_e = SR / DEC;
+    double mean = 0; for (double e : env) mean += e; mean /= env.size();
+    double pw = 0.0;
+    for (double fm = 5.0; fm <= 80.0; fm += 2.5) {
+        const double w = 2 * M_PI * fm / fs_e, c = 2 * std::cos(w);
+        double s0, s1 = 0, s2 = 0;
+        for (double e : env) { s0 = (e - mean) + c * s1 - s2; s2 = s1; s1 = s0; }
+        pw += (s1 * s1 + s2 * s2 - c * s1 * s2) / (env.size() * (double)env.size());
+    }
+    return std::sqrt(pw) / (mean + 1e-30);
+}
+
 struct Excess { double worst, mean; };
 
 template <class Engine>
@@ -127,10 +159,62 @@ int main()
     shipped.set_xover(250.0f);
     shipped.tune(0.20f, 1.0f);   // §20: long-window smoothing only, as wired
     const Excess s = excess(shipped, in, ideal);
-    const bool ok = s.mean < 19.0 && s.worst < 73.0;
+    bool ok = s.mean < 19.0 && s.worst < 73.0;
     std::printf("  shipped 4096+2048 @ xout 250: excess AM mean %+.2f dB (< 19),"
                 " worst %+.1f dB (< 73)  [RATCHET, §20]%s\n",
                 s.mean, s.worst, ok ? "  ok" : "  ** FAIL");
+
+    // §23 guardrails learned from the Spike-8 post-mortem.
+    // 1. Roughness (ear proxy) vs the ideal, ratcheted like the AM metric.
+    // 2. Per-harmonic PARITY vs the parametric-off engine: the worst LOCAL
+    //    regression the §22 engagement causes. Report-only for now (Spike 7
+    //    itself trades a few harmonics), but it must be looked at on every
+    //    engine change — the Spike-8 failure was shipping a mean improvement
+    //    while this number quietly grew.
+    {
+        auto render = [&](auto& e) {
+            e.set_ratio(2.0f); e.reset();
+            std::vector<float> ring(RSZ, 0.0f), out(in.size());
+            uint64_t wpos = RSZ;
+            for (size_t i = 0; i < in.size(); ++i) {
+                ring[wpos & MASK] = in[i]; ++wpos;
+                out[i] = e.process(ring.data(), MASK, wpos);
+            }
+            return out;
+        };
+        const auto o_on = render(shipped);
+        double rworst = -1e30, rsum = 0; int rcnt = 0;
+        for (double f0 : { 110.0, 138.59 })
+            for (int h = 1; h <= NH; ++h) {
+                const double f = 2.0 * fh(f0, h);
+                if (f > 0.45 * SR) continue;
+                const double ex = 20.0 * std::log10(
+                    (mod_index(o_on, f) + 1e-9) / (mod_index(ideal, f) + 1e-9));
+                rworst = std::max(rworst, ex); rsum += ex; ++rcnt;
+            }
+        const bool rok = (rsum / rcnt) < 2.0 && rworst < 14.0;
+        ok = ok && rok;
+        std::printf("  roughness (5-80 Hz, ear proxy): mean %+.2f dB (< 2),"
+                    " worst %+.1f dB (< 14)  [RATCHET, §23]%s\n",
+                    rsum / rcnt, rworst, rok ? "  ok" : "  ** FAIL");
+
+        static MultiVocoder<4096, 2048, 8> off_eng;
+        off_eng.init(SR);
+        off_eng.set_xover(250.0f);
+        off_eng.tune(0.20f, 1.0f);
+        off_eng.prony(false, false);
+        const auto o_off = render(off_eng);
+        double par = -1e30; double pf = 0; int ph_ = 0;
+        for (double f0 : { 110.0, 138.59 })
+            for (int h = 1; h <= NH; ++h) {
+                const float f = (float)(2.0 * fh(f0, h));
+                const double d = am_db(o_on, f) - am_db(o_off, f);
+                if (d > par) { par = d; pf = f0; ph_ = h; }
+            }
+        std::printf("  [§23 parity, report-only] worst per-harmonic regression"
+                    " of §22 vs OFF: %+.1f dB (%s h%d)\n",
+                    par, pf > 120.0 ? "C#3" : "A2", ph_);
+    }
 
     // The out-of-budget purity reference (§16), report-only.
     static MultiVocoder<8192, 4096> pure;
