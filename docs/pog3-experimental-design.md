@@ -642,13 +642,18 @@ neutralisé par `out_level` 0,4, les métriques étant des ratios) ; et la
 **fuite du Goertzel rectangulaire** (le dry de B à 330 fuit à ~−20 dB dans la
 mesure à 440 et bat contre elle ; Goertzel fenêtré Hann, lobes < −31 dB).
 
+### Validé à l'oreille ✓
+
+A/B `render_wav` sur le mix Classic POG (dry + sub1 + up1, arpège mi majeur
+soutenu, ATTACK 500 ms) : verdict utilisateur — *le mix global est « très sale »
+(les octaves des notes tenues sont hachées par le duck à chaque pluck), le mix
+polyphonique « beaucoup plus satisfaisant »*. L'oreille confirme la mesure
+(octave de B2 au pluck 3 : 0,075→0,034→0,077→0,020 en global, décroissance
+lisse 0,129→0,099→0,095→0,093 en polyphonique). Le matériau est pourtant le
+pire cas d'harmoniques partagées (E3 = h2 de E2) — le comportement
+« swell de la partie ajoutée » des bins partagés passe l'écoute.
+
 ### Reste à faire
-- **Écoute** : valider le rendu à l'oreille sur un arpège réel (le −0,9 dB
-  résiduel vient du transitoire de B qui traverse la bande de A ; garde de
-  60 ms dans le test). `render_wav` peut produire l'A/B.
-- **Harmoniques partagées** : deux notes à l'octave l'une de l'autre partagent
-  des bins ; la re-attaque swelle la partie **ajoutée** de ces bins (ratio
-  ancien/nouveau) — comportement doux par construction, à confirmer à l'oreille.
 - Le granulaire garde l'enveloppe globale : si le swell polyphonique doit un
   jour exister à 3 ms de latence, c'est un banc d'enveloppes temps-réel par
   sous-bande (les gains réels ne décorrèlent pas, contrairement aux phases des
