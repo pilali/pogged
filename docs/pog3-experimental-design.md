@@ -1240,3 +1240,57 @@ mesuré 1,87/13,5). Audit 20/20.
 trame de la fenêtre longue (`frame_seq`) ; `pogged_dsp` ajoute
 `prony_fmin(160)` par voix. Connaissances portées par `stream_vocoder.hpp`
 (`HINT_FMAX`, `HINT_SEP_MAX`, `HINT_ROTW`, `PRONY_FMIN`, `_render_hinted`).
+
+---
+
+## 25. La vraie cible : le milieu de la paire h2 — bande 250-600 sur le 4096 (expérimental)
+
+Retour d'écoute décisif : le croisement abaissé (§24 bis, essayé à 210 Hz)
+n'apporte **aucune** amélioration à l'oreille sur l'harmonique dissonante.
+Diagnostic élargi (balayage spectral complet, sonde fine 400 ms, raies
+présentes chez nous mais absentes de l'idéal) : l'artefact dominant n'est
+PAS le milieu de la paire de fondamentales que traquait le §24 (~249 Hz,
+descendu à −17 dB) mais le **milieu de la paire des SECONDES harmoniques**
+(A2 h2 220 + C#3 h2 277 → milieu 248 → ×2 = **498 Hz**, ou 444 sur G2+B2),
+à **−8,5 dB** — « presque au même niveau que le reste », la description
+exacte de l'utilisateur, et présent dans TOUS les rendus depuis le début.
+
+**Pourquoi le §24 est passé à côté :** 498 Hz est AU-DESSUS du croisement
+250 → porté par la fenêtre courte. 2048 ne résout pas la paire h2 (57 Hz =
+2,4 bins) → translation du lobe fusionné vers son milieu. Le gate
+`HINT_SEP_MAX = 1,6 bin`, réglé pour les fondamentales, EXCLUT cette paire ;
+l'élargir ne la descend qu'à −11,9 dB et régresse l'accord ailleurs (régime
+de bascule de topologie, cf. §23). Abaisser le croisement ne la déplace pas
+(elle reste au-dessus) → confirme l'écoute de l'utilisateur.
+
+**Le levier §25 (`XBAND=1`, hors défaut) :** remonter le croisement
+**250 → 600**, ce qui confie toute la bande 250-600 à la fenêtre **4096**,
+qui RÉSOUT la paire h2 (4,9 bins). Mesuré (tierce A2+C#3 ×2, sonde 400 ms) :
+
+| raie | expédié 250 | §25 (600, fmin 0) |
+|---|---|---|
+| 498 Hz (milieu h2) | **−8,5 dB** | **−23,2 dB** |
+| 249 Hz (milieu h1) | −14,5 | **−28,2 dB** |
+| accord, excès AM moyen | +17,4 | **+12,9 dB** |
+| accord, pire | +68 | +66 |
+
+Le 249 tombe aussi (−28) : la paire de fondamentales n'étant plus AU BORD du
+croisement, le §22 de la fenêtre longue peut enfin l'engager (`prony_fmin 0`)
+sans que sa modulation de fréquence fuie par le LP — l'inverse exact de la
+contrainte §24 (fmin 160 n'existait qu'à cause du croisement à 250).
+
+**Deux coûts mesurés, arbitrage à l'oreille et à la pédale :**
+1. **Latence** — la bande 250-600 Hz passe de la fenêtre 42 ms à la 85 ms.
+   C'est un recul réel en bas-médium sur les voix pitchées. Seul le test
+   instrument tranche s'il est acceptable (l'utilisateur a demandé à tester
+   le plugin compilé pour décider de poursuivre cette voie).
+2. **Rugosité** — le §22 sur la paire de fondamentales ajoute du flutter
+   5-80 Hz (rugosité moyenne shimmer 1,87 → 2,32, régresse le ratchet §23).
+   C'est pourquoi §25 est un **DRAPEAU**, pas le défaut : il ne s'expédie pas
+   tant que l'oreille n'a pas validé le compromis ET qu'un suivi n'a pas
+   dé-fluttré les fondamentales (le mur §23 de la paire de fondamentales
+   revient ici, sur l'autre note : C#3 h1 +3 → +20).
+
+**Câblage :** `XBAND=1` (Makefile) → `-DPOGGED_XBAND` → `VOC_XOVER_OUT 600` +
+`VOC_PRONY_FMIN 0` dans `pogged_dsp.cpp`. Défaut inchangé (250/160), audit
+20/20 vert, ratchets intacts. `make TARGET=rpi5 XBAND=1` pour la variante.

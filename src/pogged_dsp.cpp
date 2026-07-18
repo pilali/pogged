@@ -35,7 +35,32 @@ using PoggedVocoder = MultiVocoder<4096, 2048, 8>;
 // gain since is kept: LR8 crossover (§15), real FFT (§19), transient
 // reinjection (§18), per-bin swell (§14). Timbre stability within this
 // budget is the open §20 program; shimmer_test ratchets it.
-static constexpr float VOC_XOVER_OUT = 250.0f;
+//
+// §25 EXPERIMENT (build with XBAND=1; default OFF). The dominant audible
+// artifact the ear caught was NOT the §24 fundamental-pair midpoint (~249 Hz,
+// fixed) but the SECOND-harmonic pair's midpoint (~498 Hz on a low third), at
+// -8.5 dB — "almost the same level as the rest". It sits ABOVE the 250
+// crossover, so the SHORT window rendered it, and 2048 cannot resolve that
+// pair (2.4 bins) -> it smears the merged lobe to the pair midpoint. §25
+// raises the crossover 250 -> 600, handing the whole 250-600 band to the
+// 4096 LONG window, which DOES resolve the h2 pair (4.9 bins): 498 drops
+// -8.5 -> -23 dB. With the pair no longer at the crossover edge, the long
+// window's §22 also engages on the FUNDAMENTAL pair (fmin 0) and kills the
+// 249 midpoint (-> -28). Chord excess-AM mean improves 17.4 -> 12.9 dB.
+//   TWO measured costs, both for the ear to rule on:
+//   1. LATENCY: the 250-600 Hz output band moves from the 42 ms short window
+//      to the 85 ms long window — a real low-mid latency increase.
+//   2. ROUGHNESS: §22 on the fundamental pair adds 5-80 Hz flutter (shimmer
+//      roughness mean 1.87 -> 2.32 — regresses the §23 ratchet). This is why
+//      §25 is a FLAG, not the default: it must not be shipped until the ear
+//      confirms the trade and a follow-up de-flutters the fundamentals.
+#ifdef POGGED_XBAND
+static constexpr float VOC_XOVER_OUT  = 600.0f;
+static constexpr float VOC_PRONY_FMIN = 0.0f;
+#else
+static constexpr float VOC_XOVER_OUT  = 250.0f;
+static constexpr float VOC_PRONY_FMIN = 160.0f;
+#endif
 #endif
 #endif
 #include "delay_line.hpp"
@@ -436,14 +461,14 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // are at least partially resolved) and cleans the crossover band
         // (34 Hz pair: 37.7 -> 27.6 dB AM).
         p->pv[v].tune(0.20f, 1.0f);
-        // §24: the long window's §22 stays OFF below 160 Hz — its rendition
-        // of a merged fundamental pair wobbles in frequency, and through the
-        // crossover LP that wobble was the loud midpoint parasite the ear
-        // caught on a low third (measured -5.5 dB vs a real partial; with
-        // the gate it sits at the ideal's own -9.1 dB). The pair itself is
-        // rendered by the short window on exact kernels at the frequencies
-        // the long window resolves and exports (the §24 hint path).
-        p->pv[v].prony_fmin(160.0f);
+        // §24/§25: the long window's §22 below 160 Hz is gated OFF at the
+        // default 250 crossover — the fundamental pair is AT the crossover
+        // edge there and §22's frequency wobble leaks through the LP as the
+        // midpoint parasite. Under §25 (XBAND, crossover 600) the pair is deep
+        // in the long window's passband, no longer at the edge, so §22 engages
+        // and resolves the 249 midpoint (measured -8.7 -> -28 dB). See the
+        // VOC_PRONY_FMIN definition for the two configs.
+        p->pv[v].prony_fmin(VOC_PRONY_FMIN);
 #endif
     }
 #endif

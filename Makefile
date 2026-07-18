@@ -49,6 +49,16 @@ else  # native
                 -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter
 endif
 
+# §25 experiment: XBAND=1 raises the vocoder crossover 250 -> 600, so the
+# 4096 long window carries the 250-600 Hz band and resolves the second-
+# harmonic pair whose midpoint was the loud ~498 Hz parasite. Costs low-mid
+# latency (250-600 moves to the 85 ms window) and a little fundamental
+# roughness — off by default, built for the pedalboard A/B. Works with any
+# TARGET, e.g. `make TARGET=rpi5 XBAND=1`.
+ifeq ($(XBAND),1)
+    override CXXFLAGS += -DPOGGED_XBAND
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 
