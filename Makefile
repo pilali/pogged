@@ -79,7 +79,17 @@ all: $(BINARY)
 
 pogged: $(BINARY)
 
-$(BINARY): $(SOURCES) $(HEADERS)
+# Make tracks FILE dependencies, not compiler FLAGS — so a flags-only change
+# (e.g. `make XBAND=350` after a plain `make`) would leave the old .so in place
+# and print "nothing to do". Record the flag signature in a stamp file and
+# depend on it, so any change to CXX/CXXFLAGS/XBAND forces a rebuild.
+.PHONY: FORCE
+build/.flagsig: FORCE
+	@mkdir -p build
+	@sig='$(CXX)|$(CXXFLAGS)|$(LV2FLAGS)|$(LDFLAGS)'; \
+	 [ -f $@ ] && [ "$$(cat $@)" = "$$sig" ] || printf '%s' "$$sig" > $@
+
+$(BINARY): $(SOURCES) $(HEADERS) build/.flagsig
 	$(CXX) $(CXXFLAGS) $(LV2FLAGS) -fPIC -shared -o $@ $(SOURCES) $(LDFLAGS)
 
 clean:
