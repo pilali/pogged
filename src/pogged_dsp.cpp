@@ -72,6 +72,12 @@ static constexpr float VOC_PRONY_FMIN = 0.0f;
 static constexpr float VOC_XOVER_OUT  = 250.0f;
 static constexpr float VOC_PRONY_FMIN = 160.0f;
 #endif
+// §26: input-peak cap for the DOWN voices (see the voice-init loop).
+// Overridable at build time for A/B (POGGED_SUB_FMAX=1e9f disables the cap).
+#ifndef POGGED_SUB_FMAX
+#define POGGED_SUB_FMAX 350.0f
+#endif
+static constexpr float VOC_SUB_FMAX = POGGED_SUB_FMAX;
 #endif
 #endif
 #include "delay_line.hpp"
@@ -480,6 +486,18 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // and resolves the 249 midpoint (measured -8.7 -> -28 dB). See the
         // VOC_PRONY_FMIN definition for the two configs.
         p->pv[v].prony_fmin(VOC_PRONY_FMIN);
+        // §26: the DOWN voices (÷2, ÷4) fold the chord's UPPER partials into
+        // the mid-band — a real-guitar E chord put a partial near 370 Hz that
+        // the sub halved to ~185 Hz (an F#), amplified by the per-peak
+        // translation into a loud dissonant tone the ear flagged for months.
+        // A sub-octave only needs the low fundamentals, so cap the sub's
+        // analysed input peaks: the fold vanishes (measured -13 -> -66 dB at
+        // 185 Hz on the user's own recording) while the octave-down body is
+        // untouched (the E4 harmonic's own sub at 165 Hz stays at -5.4 dB).
+        // 350 Hz sits just under the offending partial and above every
+        // fundamental of a low-to-mid chord. The up voices keep full range.
+        if (v == V_SUB1 || v == V_SUB2)
+            p->pv[v].peak_fmax(VOC_SUB_FMAX);
 #endif
     }
 #endif

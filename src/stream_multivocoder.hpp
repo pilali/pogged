@@ -123,6 +123,10 @@ public:
     // the short window's band).
     void prony_fmin(float lo_hz) noexcept { _lo.PRONY_FMIN = lo_hz; }
 
+    // §26: cap the analysed input peaks of BOTH windows (the sub voice uses
+    // this to stop halving the chord's upper partials into a dissonant tone).
+    void peak_fmax(float hz) noexcept { _lo.PEAK_FMAX = hz; _hi.PEAK_FMAX = hz; }
+
     // §24 harness knob: _rot writeback half-width of the short window's
     // hinted renderer (see StreamVocoderT::HINT_ROTW).
     void hint_rotw(int w) noexcept { _hi.HINT_ROTW = w; }

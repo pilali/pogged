@@ -1294,3 +1294,54 @@ contrainte §24 (fmin 160 n'existait qu'à cause du croisement à 250).
 **Câblage :** `XBAND=1` (Makefile) → `-DPOGGED_XBAND` → `VOC_XOVER_OUT 600` +
 `VOC_PRONY_FMIN 0` dans `pogged_dsp.cpp`. Défaut inchangé (250/160), audit
 20/20 vert, ratchets intacts. `make TARGET=rpi5 XBAND=1` pour la variante.
+
+---
+
+## 26. LE vrai coupable : la voix sub replie les partiels aigus (analyse sur signal réel)
+
+Tournant méthodologique. L'utilisateur a tranché à l'oreille : bouger le
+crossover (§25) de 250 à 900 ne change RIEN au défaut audible. Donc le défaut
+est indépendant de la fenêtre — pas le milieu de paire des §24/§25. Et il a
+fourni ce qui manquait depuis le début : **un vrai enregistrement** (accord de
+Mi en DI + le rendu wet du plugin, preset dry 100 / up1 80 / sub1 80, xover 900).
+
+**Ce que le vrai signal a révélé, que le synthétique cachait :**
+1. Passer le dry dans ma *simulation* d'un seul MultiVocoder donnait un rendu
+   bien plus PROPRE que le vrai plugin (185 Hz : −19,9 sim contre −11,8 réel).
+   J'optimisais un modèle plus propre que la réalité — d'où des mois de chiffres
+   qui ne collaient pas à l'oreille.
+2. Le défaut = une raie à **185 Hz (un F#)** à −11,8 dB dans le wet réel — « un
+   ton au-dessus de la fondamentale E, un ton sous la tierce G# », mot pour mot
+   la plainte. Absente du synthétique (−76 à −105 dB même sur l'accord complet),
+   présente uniquement sur la vraie guitare.
+3. Isolation par voix dans le VRAI dsp : le F# vient de la voix **sub1 (÷2)**,
+   seule (−7,5 dB). up1/up2/up5/sub2/dry le laissent à −48/−134. Les
+   expériences de crossover portaient sur les voix UP → n'y touchaient pas →
+   aucun changement à l'oreille. Tout s'explique.
+
+**Mécanisme :** la vraie guitare a de l'énergie vers 370 Hz (ni frettée ni
+harmonique de l'accord — médiator, résonance, inharmonicité) ; la voix sub la
+divise en 185 Hz (F#) et l'AMPLIFIE (~12 dB) par la translation par pic. Un
+passe-bas de l'entrée du sub à 260 Hz tue le 185 (−46,7) sans toucher le grave.
+
+**Correction (§26) :** plafond de fréquence sur les pics analysés,
+`PEAK_FMAX`, appliqué aux voix DOWN (÷2, ÷4) via `MultiVocoder::peak_fmax`.
+Une octave-en-dessous n'a besoin que des basses fondamentales ; au-dessus du
+plafond les partiels aigus ne sont plus rendus, donc plus repliés. Réglé à
+**350 Hz** (`VOC_SUB_FMAX`) : juste sous le partiel fautif (370) et au-dessus
+de toute fondamentale d'un accord grave-médium.
+
+**Mesuré sur l'enregistrement de l'utilisateur :**
+| | F# à 185 Hz | corps du sub (82/104/123/165 Hz) |
+|---|---|---|
+| voix sub seule, avant | −7,5 dB | intact |
+| voix sub seule, plafond 350 | **−66 dB** | **intact** (165 à −5,4, inchangé) |
+| mix complet dry+up1+sub, avant | −15,7 dB | — |
+| mix complet, après §26 | **−37,3 dB** (inaudible) | — |
+
+Audit 20/20 (shift/range sub asserts inchangés). Coût CPU nul (moins de pics à
+rendre). Le seul compromis : sur un accord très aigu (fondamentales > 350 Hz)
+le sub perd de l'extension — cas marginal pour une octave-basse ; `VOC_SUB_FMAX`
+est ajustable. Leçon actée : **mesurer sur le vrai signal de l'instrument, pas
+sur du synthétique** — trois mois de traque d'un artefact que le synthétique ne
+pouvait pas reproduire.

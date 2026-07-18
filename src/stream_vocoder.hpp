@@ -161,6 +161,16 @@ public:
     // members (not constexpr) so the offline harnesses can sweep them; the
     // defaults are the values frozen by the §20 sweep.
     float PEAK_FLOOR  = 0.003f;   // drop peaks < this x frame max (~-50 dB)
+    float PEAK_FMAX   = 1e9f;     // §26: ignore ANALYSIS peaks above this input
+                                  // Hz. The SUB voice (÷2) halves every input
+                                  // partial: the chord's UPPER partials fold
+                                  // into the mid-band and, amplified by the
+                                  // per-peak translation, sound as a loud
+                                  // dissonant tone (a real-guitar F# at half
+                                  // of ~370 Hz — the artefact the ear caught).
+                                  // A sub-octave only needs the low
+                                  // fundamentals; capping its input peaks
+                                  // removes the fold without thinning the body.
     float SMOOTH_SLOW = 0.20f;    // per-frame step on beat-wobble-sized moves
     float SMOOTH_FAST = 0.75f;    // ...on real moves > SMOOTH_TH bins
     float SMOOTH_TH   = 0.80f;    // fast/slow boundary, in bins
@@ -295,8 +305,12 @@ private:
         // apart — which collapsed low fundamentals whose lobes only span a
         // few bins (measured −30 dB on a 220 Hz partial shifted to 330 Hz).
         // 1. Peaks on the ANALYSIS spectrum (local max over ±2 bins).
+        // §26: peaks above PEAK_FMAX are not rendered (the sub voice caps its
+        // input here — see the member). Their energy simply does not sound.
+        const int pk_bin_max = (PEAK_FMAX >= 1e8f) ? (BINS - 3)
+                             : std::min(BINS - 3, (int)(PEAK_FMAX / _freq_pbin));
         int n_peaks = 0;
-        for (int j = 2; j < BINS - 2; ++j) {
+        for (int j = 2; j <= pk_bin_max; ++j) {
             const float m = _ana_mag[j];
             if (m > 1e-9f &&
                 m >= _ana_mag[j - 1] && m >= _ana_mag[j - 2] &&
