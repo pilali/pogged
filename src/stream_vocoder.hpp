@@ -71,6 +71,15 @@ public:
     static constexpr int PK  = 8;    // Prony history, frames
     static constexpr int KW  = 4;    // synthesis kernel half-width, bins
     static constexpr int KOS = 32;   // kernel table oversampling
+    // §24 — cross-window frequency import. A short companion window cannot
+    // resolve low pairs; translating their merged lobe by the merged
+    // estimate lands BOTH partials near the pair's midpoint (the loud
+    // dissonant wanderer the user heard, measured -5 dB vs a real partial).
+    // The RESOLVING window exports its partial frequencies (peaks + §22
+    // pair tracks); the short window renders those regions as exact kernels
+    // with amplitudes solved on its OWN current frame — the long window's
+    // frequency precision at the short window's time resolution.
+    static constexpr int MAXHINT = 48;
     static constexpr int OUTBUF = N * 4;        // ring buffer ≥ 2 × max unread
 
     // hop_phase staggers WHEN this instance does its FFT burst, in samples
@@ -122,6 +131,9 @@ public:
         _hist_idx = 0;
         _warm     = 0;
         std::memset(_pr_on,     0, sizeof _pr_on);
+        _n_hint_out = 0;
+        _n_hints    = 0;
+        std::memset(_ht_on,     0, sizeof _ht_on);
         std::memset(_out_buf,   0, sizeof _out_buf);
         for (auto& c : _cx) c = {};
         _hop_cnt   = _hop_phase;   // NOT 0: a reset must not re-align the burst
@@ -153,6 +165,33 @@ public:
     float SMOOTH_FAST = 0.75f;    // ...on real moves > SMOOTH_TH bins
     float SMOOTH_TH   = 0.80f;    // fast/slow boundary, in bins
     bool  PRONY_ON    = true;     // §22 parametric resynthesis of merged pairs
+    float PRONY_FMIN  = 0.0f;     // §24: engage §22 only on peaks above this
+                                  // input Hz — lets a resolving window keep
+                                  // its own low fundamentals RIGID (its §22
+                                  // wobble through the crossover LP is the
+                                  // midpoint parasite) while §22 still covers
+                                  // the collision belt above
+    float HINT_FMAX   = 900.0f;   // §24: export/import partials below this, Hz
+    int   HINT_ROTW   = 3;        // §24: half-width (bins) of the _rot
+                                  // writeback around a hinted peak — region-
+                                  // wide writes bleed into neighbour regions
+                                  // when boundaries drift (measured flutter)
+    float HINT_SEP_MAX = 1.6f;    // §24: hinted render only when the pair is
+                                  // UNRESOLVABLE here (closer than this many
+                                  // of the receiving window's bins) — where
+                                  // it is partially resolvable, the window's
+                                  // own rigid rendering measured better
+
+    // §24 producer side: resolved partial frequencies of the LAST frame.
+    int          hint_count() const noexcept { return _n_hint_out; }
+    const float* hint_freqs() const noexcept { return _hint_out; }
+    uint32_t     frame_seq()  const noexcept { return _frame_seq; }
+
+    // §24 consumer side: the resolving companion's frequencies.
+    void set_hints(const float* f, int n) noexcept {
+        _n_hints = std::min(n, MAXHINT);
+        for (int i = 0; i < _n_hints; ++i) _hints[i] = f[i];
+    }
 #ifdef POGGED_PRONY_DEBUG
     int dbg_engage = 0, dbg_birth = 0;   // frames rendered parametrically / new pairs
     int dbg_rej[10] = {};   // rejection counters, indexed by gate
@@ -323,6 +362,8 @@ private:
         }
 
         std::memset(_npr_on, 0, sizeof _npr_on);   // §22: refilled per frame
+        std::memset(_nht_on, 0, sizeof _nht_on);   // §24
+        std::memset(_pk_prony, 0, sizeof _pk_prony);
 
         if (n_peaks == 0) {
             for (int k = 0; k < BINS; k++) _cx[k] = {};   // silent frame
@@ -356,6 +397,8 @@ private:
             // path, which is an identity there).
             const bool prony_ready = PRONY_ON && _warm >= PK &&
                                      std::abs(_ratio - 1.0f) > 0.01f;
+            const bool hints_ready = _n_hints > 0 &&
+                                     std::abs(_ratio - 1.0f) > 0.01f;
             for (int i = 0; i < n_peaks; ++i) {
                 const int   p      = _peaks[i];
                 const float inc    = rot_c * _nf[p];
@@ -365,7 +408,41 @@ private:
                     _rot[j] -= 2.0f * float(M_PI) *
                                std::round(_rot[j] * float(M_1_PI) * 0.5f);
                 }
-                if (prony_ready && _try_parametric(p, lo, hi)) continue;
+                // §24 first: imported frequencies are ground truth. Take
+                // the two hints nearest the peak inside the region's span;
+                // if the resolver's peaks flickered away this frame, a held
+                // pair track keeps the rendering engaged.
+                if (hints_ready) {
+                    float h1 = 0, h2 = 0; int nh = 0;
+                    float d1 = 1e30f, d2m = 1e30f;
+                    for (int t = 0; t < _n_hints; ++t) {
+                        const float bh = _hints[t] / _freq_pbin;
+                        if (bh < (float)lo - 0.5f || bh > (float)hi + 0.5f)
+                            continue;
+                        const float d = std::abs(bh - (float)p);
+                        if (d < d1)       { d2m = d1; h2 = h1; d1 = d; h1 = _hints[t]; ++nh; }
+                        else if (d < d2m) { d2m = d; h2 = _hints[t]; ++nh; }
+                        else ++nh;
+                    }
+                    bool done = false;
+                    if (nh >= 2) {
+                        if (h2 < h1) std::swap(h1, h2);
+                        done = _render_hinted(p, lo, hi, h1, h2);
+                    } else {
+                        // hold-over: continue a recently hinted pair
+                        int bb = -1;
+                        for (int b = std::max(0, p - 2);
+                             b <= std::min(BINS - 1, p + 2); ++b)
+                            if (_ht_on[b] && _ht_hold[b] > 0) { bb = b; break; }
+                        if (bb >= 0) {
+                            done = _render_hinted(p, lo, hi, _ht_f1[bb], _ht_f2[bb]);
+                            if (done) _nht_hold[p] = _ht_hold[bb] - 1;
+                        }
+                    }
+                    if (done) continue;
+                }
+                if (prony_ready && _nf[p] >= PRONY_FMIN &&
+                    _try_parametric(p, lo, hi)) { _pk_prony[p] = true; continue; }
                 const std::complex<float> ph = std::polar(1.0f, _rot[p]);
                 const float d_frac = (_nf[p] / _freq_pbin) * (_ratio - 1.0f);
                 const int dst_lo = std::max(0, (int)std::ceil((float)lo + d_frac));
@@ -394,6 +471,29 @@ private:
                 _pr_cnt[b] = _npr_cnt[b];
             }
         }
+        for (int b = 0; b < BINS; ++b) {
+            _ht_on[b] = _nht_on[b];
+            if (_nht_on[b]) {
+                _ht_f1[b] = _nht_f1[b]; _ht_f2[b] = _nht_f2[b];
+                _ht_r1[b] = _nht_r1[b]; _ht_r2[b] = _nht_r2[b];
+                _ht_hold[b] = _nht_hold[b];
+            }
+        }
+        // §24 hint export: RESOLVED peaks below HINT_FMAX only. Two exclusions,
+        // both measured: a peak whose region the §22 fit took is a MERGED
+        // pair — its own estimate sits near the pair's midpoint, and the §22
+        // pair frequencies wobble on beating material (§23) — either export
+        // poisons the receiver (parasite -4.4 dB vs -9.1 clean). Export
+        // nothing for those; the receiver's hold-over bridges the gap.
+        _n_hint_out = 0;
+        for (int i = 0; i < n_peaks && _n_hint_out < MAXHINT; ++i) {
+            const int p = _peaks[i];
+            if (_nf[p] > HINT_FMAX) break;         // peaks sorted by bin
+            if (_ana_mag[p] < 0.02f * _mmax) continue;
+            if (_pk_prony[p]) continue;
+            _hint_out[_n_hint_out++] = _nf[p];
+        }
+        ++_frame_seq;
         _hist_idx = (_hist_idx + 1) % PK;
         if (_warm < PK + 1) ++_warm;
 
@@ -454,6 +554,81 @@ private:
         const int   i = (int)t;
         const float f = t - i;
         return _kern[i] + f * (_kern[i + 1] - _kern[i]);
+    }
+
+    // §24 — render the region as the two IMPORTED partial frequencies, with
+    // amplitudes solved on the current frame. No estimation gates needed:
+    // the frequencies come from a window that resolves them. Returns false
+    // only on numerical ill-conditioning (then rigid renders).
+    bool _render_hinted(int p, int rlo, int rhi, float f1, float f2) noexcept {
+        const float db1 = f1 / _freq_pbin - (float)p;
+        const float db2 = f2 / _freq_pbin - (float)p;
+        if (std::abs(db1) > 3.5f || std::abs(db2) > 3.5f ||
+            std::abs(db1 - db2) < 0.05f ||
+            std::abs(db1 - db2) > HINT_SEP_MAX) return false;
+        const int q2 = (p + 1 <= BINS - 2 &&
+                        (p == 0 || _ana_mag[p + 1] >= _ana_mag[p - 1]))
+                       ? p + 1 : p - 1;
+        if (q2 < 0) return false;
+        const float k11 = _kernel(-db1),                  k12 = _kernel(-db2);
+        const float k21 = _kernel((float)(q2 - p) - db1), k22 = _kernel((float)(q2 - p) - db2);
+        const float d2  = k11 * k22 - k12 * k21;
+        const float k0  = 0.5f * (float)N;
+        if (std::abs(d2) < 0.02f * k0 * k0) return false;
+        const std::complex<float> z1 = _ana_cx[p], z2 = _ana_cx[q2];
+        const std::complex<float> A = ( z1 * k22 - z2 * k12) / d2;
+        const std::complex<float> B = (-z1 * k21 + z2 * k11) / d2;
+
+        // Phasor tracks keyed by bin; birth is synced to the rigid path's
+        // rotation so the first hinted frame is phase-continuous.
+        float r1 = _rot[p], r2 = _rot[p];
+        int best = -1; float bd = 1e30f;
+        for (int b = std::max(0, p - 2); b <= std::min(BINS - 1, p + 2); ++b)
+            if (_ht_on[b]) {
+                const float d = std::abs(_ht_f1[b] - f1) + std::abs(_ht_f2[b] - f2);
+                if (d < bd) { bd = d; best = b; }
+            }
+        if (best >= 0 && bd < 4.0f * _freq_pbin) {
+            r1 = (std::abs(_ht_f1[best] - f1) <= std::abs(_ht_f2[best] - f1))
+                 ? _ht_r1[best] : _ht_r2[best];
+            r2 = (std::abs(_ht_f2[best] - f2) <= std::abs(_ht_f1[best] - f2))
+                 ? _ht_r2[best] : _ht_r1[best];
+        }
+        const float rc = 2.0f * float(M_PI) * HOP * (_ratio - 1.0f) / _sr;
+        r1 += rc * f1;
+        r1 -= 2.0f * float(M_PI) * std::round(r1 * float(M_1_PI) * 0.5f);
+        r2 += rc * f2;
+        r2 -= 2.0f * float(M_PI) * std::round(r2 * float(M_1_PI) * 0.5f);
+        _nht_f1[p] = f1; _nht_f2[p] = f2;
+        _nht_r1[p] = r1; _nht_r2[p] = r2;
+        _nht_hold[p] = 12;            // survives the resolver's peak flicker
+        _nht_on[p] = true;
+
+        // Keep the rigid path's rotation riding the dominant partial — but
+        // only within HINT_ROTW bins of the peak: region boundaries drift
+        // frame to frame, and a wider write is inherited by the NEIGHBOUR
+        // region's rigid phasors when the boundary shifts (measured as added
+        // 5-80 Hz flutter on the neighbouring harmonics).
+        const float rdom = (std::abs(A) >= std::abs(B)) ? r1 : r2;
+        for (int j = std::max(rlo, p - HINT_ROTW);
+             j < std::min(rhi, p + HINT_ROTW + 1); ++j)
+            _rot[j] = rdom;
+
+        const float fs[2] = { f1, f2 };
+        const float rs[2] = { r1, r2 };
+        const std::complex<float> as[2] = { A, B };
+        for (int i = 0; i < 2; ++i) {
+            const float tb = fs[i] * _ratio / _freq_pbin;
+            const std::complex<float> ph = as[i] * std::polar(1.0f, rs[i]);
+            const int d_lo = std::max(1, (int)std::ceil(tb - KW));
+            const int d_hi = std::min(BINS - 2, (int)std::floor(tb + KW));
+            for (int dst = d_lo; dst <= d_hi; ++dst) {
+                std::complex<float> v = ph * _kernel((float)dst - tb);
+                if (dst & 1) v = -v;
+                _cx[dst] += v;
+            }
+        }
+        return true;
     }
 
     // §22 — try the parametric (two-partial) rendering for the region whose
@@ -744,6 +919,27 @@ private:
     float _npr_r2[BINS]         = {};
     bool  _npr_on[BINS]         = {};
     float _kern[2 * KW * KOS + 1] = {};
+    // §24 state: hint export/import + hinted-pair tracks (phasors per pair,
+    // keyed by peak bin, with a hold-over so the resolver's peak flicker
+    // cannot flap the rendering).
+    float    _hint_out[MAXHINT] = {};
+    int      _n_hint_out        = 0;
+    uint32_t _frame_seq         = 0;
+    float    _hints[MAXHINT]    = {};
+    int      _n_hints           = 0;
+    bool     _pk_prony[BINS]    = {};   // peak's region rendered by §22 this frame
+    float    _ht_f1[BINS]       = {};
+    float    _ht_f2[BINS]       = {};
+    float    _ht_r1[BINS]       = {};
+    float    _ht_r2[BINS]       = {};
+    int      _ht_hold[BINS]     = {};
+    bool     _ht_on[BINS]       = {};
+    float    _nht_f1[BINS]      = {};
+    float    _nht_f2[BINS]      = {};
+    float    _nht_r1[BINS]      = {};
+    float    _nht_r2[BINS]      = {};
+    int      _nht_hold[BINS]    = {};
+    bool     _nht_on[BINS]      = {};
 
     float _swl[BINS]            = {};   // per-bin swell envelope (see set_swell)
     float _swell_c              = -1.0f;   // < 0 = swell off

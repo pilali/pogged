@@ -436,6 +436,14 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // are at least partially resolved) and cleans the crossover band
         // (34 Hz pair: 37.7 -> 27.6 dB AM).
         p->pv[v].tune(0.20f, 1.0f);
+        // §24: the long window's §22 stays OFF below 160 Hz — its rendition
+        // of a merged fundamental pair wobbles in frequency, and through the
+        // crossover LP that wobble was the loud midpoint parasite the ear
+        // caught on a low third (measured -5.5 dB vs a real partial; with
+        // the gate it sits at the ideal's own -9.1 dB). The pair itself is
+        // rendered by the short window on exact kernels at the frequencies
+        // the long window resolves and exports (the §24 hint path).
+        p->pv[v].prony_fmin(160.0f);
 #endif
     }
 #endif

@@ -115,10 +115,31 @@ public:
         _hi.PRONY_ON = hi;
     }
 
+    // §24: lower frequency bound of the long window's §22 engagement. Below
+    // it the long window renders RIGID — its §22 rendition of a beating
+    // fundamental pair wobbles in frequency, and through the crossover LP
+    // that wobble is the loud midpoint parasite the ear caught. Above it §22
+    // keeps stabilising the collision belt (whose LP leakage still shades
+    // the short window's band).
+    void prony_fmin(float lo_hz) noexcept { _lo.PRONY_FMIN = lo_hz; }
+
+    // §24 harness knob: _rot writeback half-width of the short window's
+    // hinted renderer (see StreamVocoderT::HINT_ROTW).
+    void hint_rotw(int w) noexcept { _hi.HINT_ROTW = w; }
+
     // One shifted sample. Both sub-vocoders read the shared ring; the crossover
     // keeps the long path's lows and the short path's highs.
     float process(const float* ring, uint32_t mask, uint64_t wpos) noexcept {
         float l = _lo.process(ring, mask, wpos);
+        // §24: whenever the long window produced a new frame, hand its
+        // resolved partial frequencies to the short window — the short
+        // window renders low pairs as exact kernels instead of translating
+        // their merged lobe to the pair's midpoint (the loud dissonant
+        // wanderer of §24).
+        if (_lo.frame_seq() != _hint_seq) {
+            _hint_seq = _lo.frame_seq();
+            _hi.set_hints(_lo.hint_freqs(), _lo.hint_count());
+        }
         float h = _hi.process(ring, mask, wpos);
         for (auto& b : _lp) l = b.process(l);
         for (auto& b : _hp) h = b.process(h);
@@ -126,6 +147,7 @@ public:
     }
 
 private:
+    uint32_t _hint_seq = 0;
     StreamVocoderT<N_LO, OS> _lo;   // bass, resolved
     StreamVocoderT<N_HI, OS> _hi;   // treble + attacks, tight
     Biquad _lp[4], _hp[4];      // LR8 crossover on the outputs (see set_xover)

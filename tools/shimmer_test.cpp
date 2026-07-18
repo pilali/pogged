@@ -158,10 +158,11 @@ int main()
     shipped.init(SR);
     shipped.set_xover(250.0f);
     shipped.tune(0.20f, 1.0f);   // §20: long-window smoothing only, as wired
+    shipped.prony_fmin(160.0f);  // §24: long-window §22 above the parasite belt
     const Excess s = excess(shipped, in, ideal);
-    bool ok = s.mean < 19.0 && s.worst < 73.0;
-    std::printf("  shipped 4096+2048 @ xout 250: excess AM mean %+.2f dB (< 19),"
-                " worst %+.1f dB (< 73)  [RATCHET, §20]%s\n",
+    bool ok = s.mean < 18.0 && s.worst < 72.0;
+    std::printf("  shipped 4096+2048 @ xout 250: excess AM mean %+.2f dB (< 18),"
+                " worst %+.1f dB (< 72)  [RATCHET, §20]%s\n",
                 s.mean, s.worst, ok ? "  ok" : "  ** FAIL");
 
     // §23 guardrails learned from the Spike-8 post-mortem.
@@ -214,6 +215,29 @@ int main()
         std::printf("  [§23 parity, report-only] worst per-harmonic regression"
                     " of §22 vs OFF: %+.1f dB (%s h%d)\n",
                     par, pf > 120.0 ? "C#3" : "A2", ph_);
+
+        // §24 midpoint parasite: the strongest spurious tone BETWEEN the two
+        // shifted fundamentals (220/277 Hz), vs a real partial's level. The
+        // metrics above are all per-harmonic and were blind to it — the ear
+        // found it first (a loud dissonant wanderer a tone above the root).
+        // The ideal's own inter-partial floor here is -8.9 dB (skirts).
+        auto lvl = [&](const std::vector<float>& x, double f) {
+            const int win = (int)(0.100f * SR), hop = (int)(0.020f * SR);
+            double mx = 0;
+            for (int i = (int)(1.5f * SR); i + win < (int)x.size(); i += hop)
+                mx = std::max(mx, band(x, i, win, (float)f));
+            return mx;
+        };
+        const double ref = lvl(ideal, 220.0);
+        double spur = 0;
+        for (double f = 232; f <= 266; f += 3.0)
+            spur = std::max(spur, lvl(o_on, f));
+        const double spur_db = 20.0 * std::log10(spur / ref);
+        const bool sok = spur_db < -8.0;
+        ok = ok && sok;
+        std::printf("  §24 midpoint parasite (232-266 Hz): %+.1f dB vs a real"
+                    " partial (< -8, ideal floor -8.9)  [RATCHET, §24]%s\n",
+                    spur_db, sok ? "  ok" : "  ** FAIL");
     }
 
     // The out-of-budget purity reference (§16), report-only.

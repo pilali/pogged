@@ -1157,3 +1157,86 @@ est un motif de non-expédition à lui seul.** Le moteur revient à l'état
 Spike 7 (`10b3f89`) ; les acquis du Spike 8 restent documentés ci-dessus
 (diagnostic par harmonique, infrastructure ordre 3 et rendu hybride dans
 l'historique git, mur de la paire de fondamentales identifié).
+
+---
+
+## 24. Spike 9 — le parasite du milieu : import de fréquences inter-fenêtres
+
+Cible : la trouvaille D'OREILLE de l'utilisateur sur le pack tierce — dans
+TOUS les rendus, « une harmonique complètement dissonante qui sonne presque
+au même niveau que le reste, ondule environ un ton au-dessus de la
+fondamentale et un ton au-dessous de la tierce ». Mesure confirmée : sur le
+moteur expédié (Spike 7), une raie parasite à ~232-250 Hz culmine à
+**−5,5 dB** sous un partiel réel, là où le plancher inter-partiels du shift
+idéal est à −8,9 dB. Troisième angle mort métrologique du projet : toutes
+nos métriques étaient PAR harmonique — l'énergie ENTRE les harmoniques
+n'était regardée par personne. (Sonde ajoutée, puis ratchet, voir plus bas.)
+
+**Le mécanisme, en deux moitiés :**
+
+1. **Translation du lobe fusionné (fenêtre courte).** À 2048, la paire de
+   fondamentales 110 + 138,6 Hz (1,2 bin d'écart) est un seul lobe ; la
+   translation rigide déplace la région entière par l'estimée FUSIONNÉE
+   (~124 Hz, ondulant au rythme du battement) — les deux partiels
+   atterrissent près du MILIEU de paire ×2 (~247 Hz), qui erre. C'est le
+   « wanderer » entendu.
+2. **Le §22 de la fenêtre longue sur cette même paire.** Sa résynthèse rend
+   la paire à des fréquences qui vacillent d'une trame à l'autre, et ce
+   vacillement passe le LP du crossover : parasite à −1,3/−5,0 dB selon la
+   config. Le rendu RIGIDE de la fenêtre longue, lui, est propre ici (la
+   paire y est quasi résolue : 2,4 bins).
+
+**La correction expédiée :**
+
+- **Import de fréquences inter-fenêtres (« hints »).** À chaque trame, la
+  fenêtre longue exporte les fréquences de ses pics résolus (< 900 Hz, hors
+  régions prises par son §22 — estimées empoisonnées) ; la fenêtre courte
+  rend toute paire qu'ELLE ne peut pas résoudre (écart < 1,6 de SES bins,
+  `HINT_SEP_MAX`) comme deux noyaux de Hann exacts aux fréquences importées,
+  amplitudes résolues par trame (2×2 sur le lobe fusionné), pistes de
+  phaseurs continues (naissance synchronisée sur `_rot`, survie 12 trames au
+  scintillement du résolveur). Le gate d'écart est décisif : sur les paires
+  PARTIELLEMENT résolvables, le rendu propre de la fenêtre l'emporte
+  (mesuré : C#3 h6 régressait de 0 à +22 dB sans le gate).
+- **`PRONY_FMIN = 160 Hz` sur la fenêtre longue** : son §22 reste éteint
+  sous 160 Hz (les fondamentales redeviennent rigides — propres), et
+  continue de stabiliser la ceinture de collisions au-dessus. Balayage :
+  fmin 160/200 identiques, 125 réveille le parasite (la paire fusionnée
+  s'estime ~120-140), 300 perd un peu d'accord.
+- **`HINT_ROTW = 3`** : la réécriture de `_rot` autour d'un pic « hinté »
+  est bornée à ±3 bins — écrite sur toute la région, elle fuyait dans les
+  régions VOISINES quand les frontières dérivent d'une trame à l'autre
+  (flutter 5-80 Hz mesuré sur les harmoniques voisines). Un lissage
+  d'amplitude des pistes hintées a aussi été essayé : inerte sur toutes les
+  métriques — retiré (pas de mécanique non gagnée dans le moteur).
+
+**Mesures (tierce réaliste ×2, vs moteur expédié fda754d) :**
+
+| métrique | avant | après |
+|---|---|---|
+| parasite 232-266 Hz | **−5,5 dB** | **−9,1 dB** (= plancher idéal −8,9) |
+| fondamentale A2 (AM excès) | +5,5 | **+2,2** |
+| fondamentale C#3 | +6,5 | **+3,3** |
+| accord, moyenne / pire | 17,52 / 71,0 | **17,12 / 70,9** |
+| paire C3+E3 ×2 (stability) | 0,12 dB | **0,01 dB** |
+| corde seule | = OFF (0,02/0,33) | = OFF (0,02/0,33) |
+| rugosité 5-80 Hz, moyenne | +0,45 | +1,87 |
+
+Le recul de rugosité est documenté, pas caché : il vient pour l'essentiel
+des fondamentales qui passent de « sur-lissées de 11 dB sous l'idéal » à
+~3 dB de l'idéal (le signe de l'excès s'approche de zéro — c'est un
+rapprochement du modulé RÉEL du matériau, pas un flutter ajouté), plus des
+deltas dispersés de ±quelques dB. La bascule fine A2 h2 ↔ C#3 h2 (47,8→51,5
+contre 24→25,8, toutes dans la zone où le warble sature déjà) a été mesurée
+sur `HINT_ROTW` ∈ {1, 3, région} et tranchée pour ROTW=3 (meilleure moyenne,
+meilleure rugosité que région-entière, C#3 h2 préservée).
+
+**Ratchets** : accord 19/73 → **18/72** (mesuré 17,12/70,9) ; nouveau gate
+**parasite < −8 dB** (mesuré −9,1) dans shimmer_test — l'angle mort qui a
+laissé passer ce défaut est maintenant surveillé. Rugosité inchangée (2/14,
+mesuré 1,87/13,5). Audit 20/20.
+
+**Câblage** : `MultiVocoder::process` transfère les hints à chaque nouvelle
+trame de la fenêtre longue (`frame_seq`) ; `pogged_dsp` ajoute
+`prony_fmin(160)` par voix. Connaissances portées par `stream_vocoder.hpp`
+(`HINT_FMAX`, `HINT_SEP_MAX`, `HINT_ROTW`, `PRONY_FMIN`, `_render_hinted`).
