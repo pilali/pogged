@@ -49,14 +49,18 @@ else  # native
                 -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter
 endif
 
-# §25 experiment: XBAND=1 raises the vocoder crossover 250 -> 600, so the
-# 4096 long window carries the 250-600 Hz band and resolves the second-
-# harmonic pair whose midpoint was the loud ~498 Hz parasite. Costs low-mid
-# latency (250-600 moves to the 85 ms window) and a little fundamental
-# roughness — off by default, built for the pedalboard A/B. Works with any
-# TARGET, e.g. `make TARGET=rpi5 XBAND=1`.
-ifeq ($(XBAND),1)
+# §25 experiment: XBAND raises the vocoder crossover from the default 250, so
+# the 4096 long window carries more of the low-mid and resolves the harmonic
+# pairs whose midpoints are the "dissonant wanderer" parasites. It is a
+# PURITY/LATENCY DIAL: XBAND=1 is the §25 default 600 (kills the h2 midpoint
+# ~498 Hz); XBAND=<hz> sets any crossover (e.g. XBAND=900 also kills the h3
+# midpoint ~745 Hz, cleaner but more of the band is at the 85 ms window).
+# Off by default. Works with any TARGET, e.g. `make TARGET=rpi5 XBAND=900`.
+ifdef XBAND
     override CXXFLAGS += -DPOGGED_XBAND
+    ifneq ($(XBAND),1)
+        override CXXFLAGS += -DPOGGED_XOVER=$(XBAND)
+    endif
 endif
 
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include

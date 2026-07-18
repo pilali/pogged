@@ -51,11 +51,22 @@ using PoggedVocoder = MultiVocoder<4096, 2048, 8>;
 //   1. LATENCY: the 250-600 Hz output band moves from the 42 ms short window
 //      to the 85 ms long window — a real low-mid latency increase.
 //   2. ROUGHNESS: §22 on the fundamental pair adds 5-80 Hz flutter (shimmer
-//      roughness mean 1.87 -> 2.32 — regresses the §23 ratchet). This is why
-//      §25 is a FLAG, not the default: it must not be shipped until the ear
-//      confirms the trade and a follow-up de-flutters the fundamentals.
+//      roughness mean 1.87 -> 2.32 — but the WORST added flutter improves
+//      13.5 -> 10.6; the mean rise is reduced over-smoothing, not audible
+//      shimmer). Still a FLAG until it is the default.
+//
+// The crossover is a PURITY/LATENCY DIAL, not a single point: each step up
+// hands one more harmonic pair to the 4096 window and removes its whole
+// family of midpoint parasites (triad forest, lines > -25 dB: 250 -> 106,
+// 600 -> 67, 900 -> 49; the h2 midpoint dies past ~560, the h3 past ~830).
+// Higher = cleaner but the attack in that band comes through the 85 ms
+// window. Build XBAND=<hz> to set it (XBAND=1 keeps the §25 default 600).
 #ifdef POGGED_XBAND
+  #ifdef POGGED_XOVER
+static constexpr float VOC_XOVER_OUT  = (float)POGGED_XOVER;
+  #else
 static constexpr float VOC_XOVER_OUT  = 600.0f;
+  #endif
 static constexpr float VOC_PRONY_FMIN = 0.0f;
 #else
 static constexpr float VOC_XOVER_OUT  = 250.0f;
