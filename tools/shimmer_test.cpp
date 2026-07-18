@@ -220,23 +220,30 @@ int main()
         // shifted fundamentals (220/277 Hz), vs a real partial's level. The
         // metrics above are all per-harmonic and were blind to it — the ear
         // found it first (a loud dissonant wanderer a tone above the root).
-        // The ideal's own inter-partial floor here is -8.9 dB (skirts).
+        //
+        // The window MUST be long here: a 100 ms Hann cannot separate the
+        // ~249 Hz parasite from the 220/277 Hz fundamentals' skirts, so it
+        // reads ~-9 dB of LEAKAGE and hides the real artifact underneath.
+        // A 400 ms window pulls the fundamentals down ~30 dB and exposes the
+        // true parasite (measured -14.3 dB on the shipped engine; the ideal
+        // has NO tone here, only incoherent skirt at ~-42 dB). Learned the
+        // hard way — the coarse version passed while the user still heard it.
         auto lvl = [&](const std::vector<float>& x, double f) {
-            const int win = (int)(0.100f * SR), hop = (int)(0.020f * SR);
+            const int win = (int)(0.400f * SR), hop = (int)(0.025f * SR);
             double mx = 0;
             for (int i = (int)(1.5f * SR); i + win < (int)x.size(); i += hop)
                 mx = std::max(mx, band(x, i, win, (float)f));
             return mx;
         };
-        const double ref = lvl(ideal, 220.0);
+        const double ref = lvl(ideal, 220.1);
         double spur = 0;
-        for (double f = 232; f <= 266; f += 3.0)
+        for (double f = 232; f <= 266; f += 1.0)
             spur = std::max(spur, lvl(o_on, f));
         const double spur_db = 20.0 * std::log10(spur / ref);
-        const bool sok = spur_db < -8.0;
+        const bool sok = spur_db < -12.0;
         ok = ok && sok;
-        std::printf("  §24 midpoint parasite (232-266 Hz): %+.1f dB vs a real"
-                    " partial (< -8, ideal floor -8.9)  [RATCHET, §24]%s\n",
+        std::printf("  §24 midpoint parasite (232-266 Hz, 400 ms probe): %+.1f dB"
+                    " vs a real partial (< -12)  [RATCHET, §24]%s\n",
                     spur_db, sok ? "  ok" : "  ** FAIL");
     }
 
