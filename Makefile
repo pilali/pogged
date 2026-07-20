@@ -73,7 +73,8 @@ SOURCES = src/plugin.cpp src/glibc_compat.cpp src/pogged_dsp.cpp
 HEADERS = src/pogged_dsp.h src/stream_shifter.hpp src/onset_detector.hpp \
           src/biquad.hpp src/envelope.hpp src/freeze_loop.hpp \
           src/stream_filterbank.hpp src/stream_vocoder.hpp \
-          src/stream_multivocoder.hpp
+          src/stream_multivocoder.hpp \
+          src/octave_anchor.hpp
 
 all: $(BINARY)
 

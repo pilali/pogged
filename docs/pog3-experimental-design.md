@@ -1464,3 +1464,23 @@ Ne plus recopier l'équilibre d'entrée mais RECONSTRUIRE une série propre :
 tout en « -1 OK » sur le signal réel de l'utilisateur, ET jugé propre à
 l'oreille (pas de nouvel artefact). Intégration au `SubVocoder` seulement
 après. Itératif, sans garantie d'égaler le POG3 — mais c'est la bonne voie.
+
+### §28 — intégration de l'ancre : état (WIP, option OFF par défaut)
+
+Module `octave_anchor.hpp` : détecteur f0 par SHS avec correction d'octave +
+grille d'oscillateurs à liste active (temps réel, ~37× RT), câblé sous les
+voix sub dans `pogged_dsp` (`ANCHOR_MIX`). Résultat streaming intégré sur le
+signal réel : **33/36** notes stables (contre 32 pour le sub brut) — gain
+MARGINAL, en-deçà des 35/36 du prototype hors-ligne (grille fine, fichier
+entier). Deux limites identifiées :
+1. **Battement** contre le sub brut sur accord propre soutenu (focus_test
+   +2,6 dB) : la grille à 1 Hz n'est pas exactement au f0/2 du sub → battement
+   lent. Correction à faire : f0 sub-Hz (interpolation parabolique du pic) +
+   grille plus fine, ou verrouillage sur la fréquence du sub.
+2. **Notes dures non corrigées** (E2 sub-audible ; D#4 fondamentale d'entrée
+   très faible) : la détection/l'ancre restent trop faibles là où il faudrait.
+
+Décision : l'ancre **s'expédie OFF** (`ANCHOR_MIX=0`, coût CPU nul, audit
+vert) ; le build par défaut garde le sub à régression réparée (gain sûr §27).
+L'ancre se développe en option (`-DPOGGED_ANCHOR_MIX=1.0f`) jusqu'à ce qu'elle
+dépasse nettement le sub brut sans battement.

@@ -12,6 +12,7 @@
 #ifndef POGGED_NO_VOCODER
 #include "stream_vocoder.hpp"
 #include "stream_multivocoder.hpp"
+#include "octave_anchor.hpp"
 // FOCUS's vocoder path. Multi-resolution (§13): the long window resolves the
 // bass, the short one carries the treble and the attacks. A target that pins
 // POGGED_PV_N (the Duo X pins 2048 for CPU) keeps the historic single window
@@ -81,6 +82,18 @@ static constexpr float VOC_PRONY_FMIN = 0.0f;
 static constexpr float VOC_XOVER_OUT  = 250.0f;
 static constexpr float VOC_PRONY_FMIN = 160.0f;
 #endif
+// §28: how loud the octave-lock anchor sits under the raw sub. It is a
+// work-in-progress (Spike 12): the streaming build currently only nudges the
+// octave (33/36 vs the raw sub's 32) and beats faintly against the raw sub on
+// sustained clean chords — so it ships OFF (0.0f), with zero CPU cost (the
+// anchor's per-sample work is guarded by ANCHOR_MIX > 0 and folded away when
+// it is a zero constant). Build -DPOGGED_ANCHOR_MIX=1.0f to develop/audition
+// it. Open work: sub-Hz f0 (parabolic peak) to stop the beat, stronger
+// detection for the hard notes (weak-fundamental / sub-audible).
+#ifndef POGGED_ANCHOR_MIX
+#define POGGED_ANCHOR_MIX 0.0f
+#endif
+static constexpr float ANCHOR_MIX = POGGED_ANCHOR_MIX;
 #endif
 #endif
 #include "delay_line.hpp"
@@ -309,6 +322,10 @@ struct PoggedDsp {
 #ifndef POGGED_NO_VOCODER
     PoggedVocoder pv[N_VOICES];      // up voices + dry-detune use these
     SubVocoder    pv_sub[2];         // §27: V_SUB1, V_SUB2 — OS=4, bare
+#ifndef POGGED_PV_N
+    OctaveAnchor<> anc[2];           // §28: octave-lock anchor for V_SUB1/2
+    float          anc_out[2] = {};  // this sample's anchor value, per sub voice
+#endif
     bool          pv_live[N_VOICES] = {};
 #endif
     float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
@@ -471,6 +488,10 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
             p->pv_sub[v].set_ratio(VOICE_RATIO[v]);
 #ifndef POGGED_PV_N
             p->pv_sub[v].prony(false, false);   // bare, like 351591f — no §22
+            // §28: octave-lock anchor (resynthesised harmonic series on the
+            // shifted fundamental) sits UNDER the raw sub to stop the octave
+            // wandering when the input fundamental is weak.
+            p->anc[v].init(sample_rate, VOICE_RATIO[v]);
 #endif
             continue;
         }
@@ -531,8 +552,12 @@ void pogged_dsp_reset(PoggedDsp* p)
         p->vfilt[v].reset();
         p->sh_live[v] = false;
 #ifndef POGGED_NO_VOCODER
-        if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].reset();
-        else                            p->pv[v].reset();
+        if (v == V_SUB1 || v == V_SUB2) {
+            p->pv_sub[v].reset();
+#ifndef POGGED_PV_N
+            p->anc[v].reset();
+#endif
+        } else p->pv[v].reset();
         p->pv_live[v] = false;
 #endif
     }
@@ -650,8 +675,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->sh[v].set_lag_ratio(r);
         p->sh[v].set_ratio(r);
 #ifndef POGGED_NO_VOCODER
-        if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_ratio(r);
-        else                            p->pv[v].set_ratio(r);   // translates peaks
+        if (v == V_SUB1 || v == V_SUB2) {
+            p->pv_sub[v].set_ratio(r);
+#ifndef POGGED_PV_N
+            p->anc[v].set_ratio(r);
+#endif
+        } else p->pv[v].set_ratio(r);   // translates peaks
 #endif
     }
 
@@ -725,8 +754,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             p->sdl[v].reset();   // else SPREAD replays audio from before the
                                  // voice was silenced (no-op if uninitialised)
 #ifndef POGGED_NO_VOCODER
-            if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].reset();
-            else                            p->pv[v].reset();   // stale OLA tail
+            if (v == V_SUB1 || v == V_SUB2) {
+                p->pv_sub[v].reset();
+#ifndef POGGED_PV_N
+                p->anc[v].reset();
+#endif
+            } else p->pv[v].reset();   // stale OLA tail
 #endif
         }
         p->sh_live[v] = act[v];
@@ -807,6 +840,19 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         ring[p->wpos & mask] = src;
         ++p->wpos;
 
+#ifndef POGGED_NO_VOCODER
+#ifndef POGGED_PV_N
+        // §28: advance the octave-lock anchors on every input sample (their
+        // analysis must stay continuous even when a sub voice is momentarily
+        // silent); voice_raw mixes the result under the raw sub. Guarded so the
+        // whole anchor cost folds away when ANCHOR_MIX is the default 0.
+        if (ANCHOR_MIX > 0.0f) {
+            p->anc_out[0] = p->anc[0].process(src);
+            p->anc_out[1] = p->anc[1].process(src);
+        }
+#endif
+#endif
+
         p->g_dry  += gc * (dry_t  - p->g_dry);
         p->g_sub1 += gc * (sub1_t - p->g_sub1);
         p->g_sub2 += gc * (sub2_t - p->g_sub2);
@@ -876,9 +922,17 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             float s = 0.0f;
             if (fx < 0.9999f) s += (1.0f - fx) * ge * p->sh[v].process(ring, mask, p->wpos);
             if (fx > 1e-4f) {
-                const float w = (v == V_SUB1 || v == V_SUB2)
-                              ? p->pv_sub[v].process(ring, mask, p->wpos)
-                              : p->pv[v].process(ring, mask, p->wpos);
+                float w;
+                if (v == V_SUB1 || v == V_SUB2) {
+                    w = p->pv_sub[v].process(ring, mask, p->wpos);
+#ifndef POGGED_PV_N
+                    // §28: octave-lock anchor under the raw sub (ge so it swells
+                    // with the note like the wet, gated by the vocoder mix fx).
+                    w += ge * ANCHOR_MIX * p->anc_out[v];
+#endif
+                } else {
+                    w = p->pv[v].process(ring, mask, p->wpos);
+                }
                 s += fx * w;
             }
             return s;
