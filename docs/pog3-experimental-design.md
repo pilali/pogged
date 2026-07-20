@@ -1430,3 +1430,37 @@ non touchée. Audit 20/20. Attaque du DSP corrigé = celle de 351591f.
 Reste : même à 351591f le sub n'est « pas parfait, loin s'en faut » — donc on
 enchaîne sur les pistes 1→4 (transitoires, interpolation, tonal/bruité) sur
 cette base assainie.
+
+---
+
+## 28. Spike 12 — reconstruction harmonique de la sous-octave (stabilité d'octave)
+
+But (choix utilisateur : la perfection, pas la simplicité) : que la voix sub
+soit perçue SANS ambiguïté une octave en dessous, même en polyphonie et même
+quand la fondamentale d'entrée est faible.
+
+**Le problème, précisément.** L'octave-bas ÷2 recopie l'équilibre harmonique
+de l'entrée. L'octave-bas d'une note est harmoniquement une série sur f/2
+(f/2, f, 3f/2, 2f… = n·f/2). L'oreille devrait entendre f/2 par complétude de
+la série ; mais si un harmonique domine massivement (mesuré : D#4 réel a
+h3≫h1, donc après ÷2 le 3f/2=466 Hz écrase le f/2=155 Hz) ou si f/2 est
+sub-audible (E2→41 Hz), la hauteur perçue décroche vers l'original ou l'aigu.
+Aucun filtre fixe ne corrige (cible mobile 41-330 Hz, plusieurs cibles en
+polyphonie) — mesuré §27.
+
+**Approche (banc d'essai hors-moteur d'abord, mesuré sur le signal réel).**
+Ne plus recopier l'équilibre d'entrée mais RECONSTRUIRE une série propre :
+1. STFT du signal d'entrée.
+2. Saillance de hauteur par sommation sous-harmonique (SHS) / spectre-produit
+   pour trouver les f0 candidates — polyphonique par nature (plusieurs pics de
+   saillance coexistent).
+3. Pour chaque f0 saillante, resynthétiser une série harmonique sur f0/2, avec
+   une enveloppe d'amplitude MONOTONE tirée de l'enveloppe spectrale lissée de
+   l'entrée (le timbre), pas des amplitudes par-partiel erratiques — de sorte
+   que f/2 domine toujours ses harmoniques.
+4. OLA. Cohérence de phase traitée ensuite (le glouglou est un axe séparé).
+
+**Critère de succès :** le tableau d'équilibre d'octave (octbal, §27) passe
+tout en « -1 OK » sur le signal réel de l'utilisateur, ET jugé propre à
+l'oreille (pas de nouvel artefact). Intégration au `SubVocoder` seulement
+après. Itératif, sans garantie d'égaler le POG3 — mais c'est la bonne voie.
