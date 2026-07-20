@@ -250,7 +250,10 @@ static inline float range_f_low(float v) noexcept {
 }
 // Grain spans this many periods of the voice's own output; the scan covers
 // half a period, which is all the aligner needs to find the in-phase point.
-static constexpr float GRAIN_PERIODS = 2.2f;
+#ifndef POGGED_GRAIN_PERIODS
+#define POGGED_GRAIN_PERIODS 2.2f
+#endif
+static constexpr float GRAIN_PERIODS = POGGED_GRAIN_PERIODS;
 static constexpr float ALIGN_PERIODS = 0.5f;
 // Capped so the read stays well inside the ring and smearing stays bounded:
 // a bass's -2 voice emits 7.7 Hz, which is a rumble, not a pitch — sizing
@@ -453,7 +456,10 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->mask = len - 1;
 
     const float sr = (float)sample_rate;
-    const int grain_up  = (int)(0.025f * sr);   // 25 ms — low lag, POG shimmer
+#ifndef POGGED_GRAIN_UP_MS
+#define POGGED_GRAIN_UP_MS 25.0f
+#endif
+    const int grain_up  = (int)(0.001f * POGGED_GRAIN_UP_MS * sr);  // POG shimmer/lag
     const int align     = (int)(0.010f * sr);   // 10 ms correlation scan
 
     // Aligned respawn everywhere: without it the source-position jump at
