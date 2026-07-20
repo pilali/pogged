@@ -1407,3 +1407,26 @@ netteté POG3.
 Chaque étape : un A/B sur l'enregistrement de l'utilisateur (même note,
 avant/après), jugé à l'oreille sur UN critère précis (netteté d'attaque, ou
 glouglou, etc.). Aucune régression d'un critère déjà acquis. Documenté ici.
+
+### §27 — piste 1a : la régression du sub bissectée et réparée
+
+A/B à l'oreille sur le vrai signal (sub1 seul sur une succession de notes) :
+l'expédié (OS=8 + §22 + §24 + §26) est jugé **catastrophique** ; 351591f et
+un moteur ramené à **OS=4 nu** sont équivalents et bien meilleurs. Cause
+mesurée : **OS=8 étale l'attaque** (montée 73 ms à OS=4 → 153 ms à OS=8), et
+le §26 (plafond de pics) l'étale encore plus (→ 104-170 ms) car l'attaque est
+large-bande et le plafond mange son claquant. Tout l'arc §20-§26 visait les
+voix UP (artefacts d'accord, mesurés sur synthétique) et n'aurait jamais dû
+s'appliquer à la sub.
+
+**Réparation :** les voix DOWN (÷2, ÷4) reçoivent leur propre moteur
+`SubVocoder = MultiVocoder<4096,2048,4>` (OS=4), configuré **nu** — pas de
+§22 Prony, pas de §24 hints actifs, pas de §26 plafond. Les voix UP gardent
+l'OS=8 et le reste. Le §26 est **retiré** (net-négatif : il troquait le F#
+contre la netteté d'attaque ; le F# passera par la séparation tonal/bruité,
+piste 3). Sous POGGED_PV_N (Duo X) la sub était déjà un StreamVocoder OS=4 —
+non touchée. Audit 20/20. Attaque du DSP corrigé = celle de 351591f.
+
+Reste : même à 351591f le sub n'est « pas parfait, loin s'en faut » — donc on
+enchaîne sur les pistes 1→4 (transitoires, interpolation, tonal/bruité) sur
+cette base assainie.

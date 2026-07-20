@@ -18,6 +18,7 @@
 // at that size instead.
 #ifdef POGGED_PV_N
 using PoggedVocoder = StreamVocoder;
+using SubVocoder    = StreamVocoder;   // §27: single 2048 window is already OS=4
 #else
 // OS=8 (§21): 87.5 % overlap — same windows, same latency, twice the frame
 // density, so the OLA averages 8 renderings and frame-rate artifacts smooth
@@ -25,6 +26,14 @@ using PoggedVocoder = StreamVocoder;
 // estimator baseline was decoupled from the hop). Costs 2x the FFT work —
 // affordable since the real FFT (§19).
 using PoggedVocoder = MultiVocoder<4096, 2048, 8>;
+// §27: the DOWN voices (÷2, ÷4) get their OWN engine at OS=4, bare. The whole
+// §20-§26 arc (OS=8, §22 Prony, §24 hints, §26 input cap) was tuned for the UP
+// voices' chord artefacts and applied globally; on the sub it SMEARED attacks
+// (measured 73 ms rise at OS=4 -> 153 ms at OS=8) and added the "gurgle" the
+// ear rejected — the user judged the sub "largely better" at commit 351591f,
+// which was exactly this simple OS=4 shape. So the sub goes back to it while
+// the up voices keep the OS=8 machinery that helps THEM.
+using SubVocoder    = MultiVocoder<4096, 2048, 4>;
 // §20 — the LATENCY BUDGET is the spec. The user A/B'd every build of the
 // §13-§19 arc on the pedalboard and ruled: the 4096+2048 profile (85 ms
 // bass, 42 ms above the crossover) is the usable quality/latency point;
@@ -72,12 +81,6 @@ static constexpr float VOC_PRONY_FMIN = 0.0f;
 static constexpr float VOC_XOVER_OUT  = 250.0f;
 static constexpr float VOC_PRONY_FMIN = 160.0f;
 #endif
-// §26: input-peak cap for the DOWN voices (see the voice-init loop).
-// Overridable at build time for A/B (POGGED_SUB_FMAX=1e9f disables the cap).
-#ifndef POGGED_SUB_FMAX
-#define POGGED_SUB_FMAX 350.0f
-#endif
-static constexpr float VOC_SUB_FMAX = POGGED_SUB_FMAX;
 #endif
 #endif
 #include "delay_line.hpp"
@@ -304,7 +307,8 @@ struct PoggedDsp {
     StreamShifter sh[N_VOICES];
     bool          sh_live[N_VOICES] = {};   // false ⇒ needs reset before reuse
 #ifndef POGGED_NO_VOCODER
-    PoggedVocoder pv[N_VOICES];
+    PoggedVocoder pv[N_VOICES];      // up voices + dry-detune use these
+    SubVocoder    pv_sub[2];         // §27: V_SUB1, V_SUB2 — OS=4, bare
     bool          pv_live[N_VOICES] = {};
 #endif
     float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
@@ -461,6 +465,15 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     // in any given audio block, instead of all N_VOICES colliding every HOP
     // samples. Same work, same sound — it is only *when* each voice computes.
     for (int v = 0; v < N_VOICES; ++v) {
+        // §27: DOWN voices on the bare OS=4 SubVocoder (see the type alias).
+        if (v == V_SUB1 || v == V_SUB2) {
+            p->pv_sub[v].init(sample_rate, v * (SubVocoder::HOP / N_VOICES));
+            p->pv_sub[v].set_ratio(VOICE_RATIO[v]);
+#ifndef POGGED_PV_N
+            p->pv_sub[v].prony(false, false);   // bare, like 351591f — no §22
+#endif
+            continue;
+        }
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
 #ifndef POGGED_PV_N
@@ -486,18 +499,12 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // and resolves the 249 midpoint (measured -8.7 -> -28 dB). See the
         // VOC_PRONY_FMIN definition for the two configs.
         p->pv[v].prony_fmin(VOC_PRONY_FMIN);
-        // §26: the DOWN voices (÷2, ÷4) fold the chord's UPPER partials into
-        // the mid-band — a real-guitar E chord put a partial near 370 Hz that
-        // the sub halved to ~185 Hz (an F#), amplified by the per-peak
-        // translation into a loud dissonant tone the ear flagged for months.
-        // A sub-octave only needs the low fundamentals, so cap the sub's
-        // analysed input peaks: the fold vanishes (measured -13 -> -66 dB at
-        // 185 Hz on the user's own recording) while the octave-down body is
-        // untouched (the E4 harmonic's own sub at 165 Hz stays at -5.4 dB).
-        // 350 Hz sits just under the offending partial and above every
-        // fundamental of a low-to-mid chord. The up voices keep full range.
-        if (v == V_SUB1 || v == V_SUB2)
-            p->pv[v].peak_fmax(VOC_SUB_FMAX);
+        // §26 (the sub input-peak cap) is RETIRED: measured on the user's own
+        // signal it removed the F# fold but SMEARED the attack (73 -> 104-170
+        // ms rise), because the attack transient is broadband and the cap ate
+        // its high-frequency snap. The sub's clarity mattered more; the F# on
+        // a sustained chord will be handled by tonal/noise separation (§27
+        // piste 3) without touching attacks. The DOWN voices now use pv_sub.
 #endif
     }
 #endif
@@ -524,7 +531,8 @@ void pogged_dsp_reset(PoggedDsp* p)
         p->vfilt[v].reset();
         p->sh_live[v] = false;
 #ifndef POGGED_NO_VOCODER
-        p->pv[v].reset();
+        if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].reset();
+        else                            p->pv[v].reset();
         p->pv_live[v] = false;
 #endif
     }
@@ -642,7 +650,8 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->sh[v].set_lag_ratio(r);
         p->sh[v].set_ratio(r);
 #ifndef POGGED_NO_VOCODER
-        p->pv[v].set_ratio(r);              // no lag budget: it translates peaks
+        if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_ratio(r);
+        else                            p->pv[v].set_ratio(r);   // translates peaks
 #endif
     }
 
@@ -716,7 +725,8 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             p->sdl[v].reset();   // else SPREAD replays audio from before the
                                  // voice was silenced (no-op if uninitialised)
 #ifndef POGGED_NO_VOCODER
-            p->pv[v].reset();    // same: stale OLA tail from the last note
+            if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].reset();
+            else                            p->pv[v].reset();   // stale OLA tail
 #endif
         }
         p->sh_live[v] = act[v];
@@ -730,8 +740,11 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // their sustain (the POG3 ATTACK behaviour — see stream_vocoder.hpp).
     // V_DRYD is excluded: it feeds the DRY path, whose swell is the DRY
     // ATTACK button (the global envelope lerp below), not the wet envelope.
-    for (int v = 0; v < N_VOICES; ++v)
-        p->pv[v].set_swell((env_on && v != V_DRYD) ? atk_ms : 0.0f);
+    for (int v = 0; v < N_VOICES; ++v) {
+        const float sw = (env_on && v != V_DRYD) ? atk_ms : 0.0f;
+        if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_swell(sw);
+        else                            p->pv[v].set_swell(sw);
+    }
 #endif
     // Filter sweep envelope: AD (sustain 0) — it rises on the pick then falls
     // back to the slider's frequency, which is what a filter sweep is.
@@ -862,7 +875,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 #else
             float s = 0.0f;
             if (fx < 0.9999f) s += (1.0f - fx) * ge * p->sh[v].process(ring, mask, p->wpos);
-            if (fx > 1e-4f)   s += fx * p->pv[v].process(ring, mask, p->wpos);
+            if (fx > 1e-4f) {
+                const float w = (v == V_SUB1 || v == V_SUB2)
+                              ? p->pv_sub[v].process(ring, mask, p->wpos)
+                              : p->pv[v].process(ring, mask, p->wpos);
+                s += fx * w;
+            }
             return s;
 #endif
         };
