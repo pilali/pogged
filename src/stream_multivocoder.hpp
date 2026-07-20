@@ -131,10 +131,27 @@ public:
     // hinted renderer (see StreamVocoderT::HINT_ROTW).
     void hint_rotw(int w) noexcept { _hi.HINT_ROTW = w; }
 
+    // §29: LONG-window-only mode for the UP voices. The output crossover uses
+    // OUTPUT frequency as a proxy for which INPUT partial fed a given output
+    // bin — but that proxy BREAKS for low input notes, whose harmonics reach
+    // high output frequencies (>XOVER) and get routed to the SHORT window even
+    // though they came from a dense low cluster the short window cannot resolve
+    // (measured on the user's real take: bass harmonicity 0.77 split vs 0.86
+    // long-only, treble unchanged at ~1.0). The short window only ever bought
+    // ATTACK tightness, which the user ruled secondary in the bass — so the up
+    // voices render entirely from the long window. This also SKIPS the short
+    // FFT and the crossover biquads, so it is cheaper, not just cleaner. The
+    // ~85 ms latency it costs is perceptually free down there (and authorised).
+    void long_only(bool on) noexcept { _long_only = on; }
+
     // One shifted sample. Both sub-vocoders read the shared ring; the crossover
     // keeps the long path's lows and the short path's highs.
     float process(const float* ring, uint32_t mask, uint64_t wpos) noexcept {
         float l = _lo.process(ring, mask, wpos);
+        // §29: long-only — return the long window's full-band output directly,
+        // skipping the short window's FFT, the §24 hints (there is no short
+        // window to hint) and the crossover biquads. Cheaper and cleaner.
+        if (_long_only) return l;
         // §24: whenever the long window produced a new frame, hand its
         // resolved partial frequencies to the short window — the short
         // window renders low pairs as exact kernels instead of translating
@@ -155,6 +172,7 @@ private:
     StreamVocoderT<N_LO, OS> _lo;   // bass, resolved
     StreamVocoderT<N_HI, OS> _hi;   // treble + attacks, tight
     Biquad _lp[4], _hp[4];      // LR8 crossover on the outputs (see set_xover)
+    bool   _long_only = false;  // §29: up voices render from the long window only
     float  _sr    = 48000.0f;
     float  _xover = XOVER;      // output-side; see set_xover
 };

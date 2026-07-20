@@ -1484,3 +1484,75 @@ Décision : l'ancre **s'expédie OFF** (`ANCHOR_MIX=0`, coût CPU nul, audit
 vert) ; le build par défaut garde le sub à régression réparée (gain sûr §27).
 L'ancre se développe en option (`-DPOGGED_ANCHOR_MIX=1.0f`) jusqu'à ce qu'elle
 dépasse nettement le sub brut sans battement.
+
+## §29 — la qualité couplée au registre : deux bandes d'analyse
+
+### Le diagnostic de l'utilisateur (à l'oreille, sur prise réelle)
+
+Sur une prise « succession de notes + trois accords » jouée à la voix +1 :
+- **aigus nets, graves confus** ; les accords (riches en grave) sont confus ;
+- c'est **l'inverse exact** de la voix −1, où les aigus sont mal traités et les
+  graves plus convenables.
+
+Conclusion de l'utilisateur, juste : **la qualité de rendu est couplée au
+registre d'entrée**, et les deux voix échouent aux registres opposés. Cible :
+découpler — un ÷2 doit rendre un aigu descendu aussi proprement qu'un grave,
+un ×2 doit rendre un grave monté aussi proprement qu'un aigu.
+
+### Décomposition : deux causes distinctes
+
+Un test OS=4 vs OS=8 sur les up a d'abord confirmé qu'ils sonnent **identiques**
+(l'overlap 87,5 % n'aide pas les up), écartant l'OS comme levier. Puis un
+diagnostic de netteté harmonique (part d'énergie sur la grille 2·f0, mesuré sur
+la prise réelle) a séparé les deux échecs :
+
+1. **+1 grave confus = résolution d'ANALYSE.** Fenêtre longue 4096 (bins 11,7
+   Hz) vs courte 2048 (23 Hz) : netteté des graves **0,77 → 0,86** en fenêtre
+   longue seule, aigus inchangés (~1,0). Les partiels graves serrés (surtout en
+   accord) fusionnent dans les bins larges de la fenêtre courte. La fenêtre
+   courte n'apporte rien au grave (0,76).
+2. **−1 aigu mal traité = PERCEPTION d'octave** (balance harmonique → fondamental
+   descendu trop faible) — c'est le chantier de l'ancre §28, cause différente.
+
+### Pourquoi le crossover actuel laisse la qualité dans le grave
+
+Le crossover (§20) répartit par fréquence de **sortie**, comme approximation du
+partiel d'**entrée** qui a produit chaque bin. Cette approximation **casse pour
+les notes graves** : leurs harmoniques montent au-dessus de XOVER en sortie et
+partent vers la fenêtre courte, alors qu'elles proviennent d'un cluster grave
+dense que cette fenêtre ne résout pas. Le §20 assumait ce compromis (« short
+window rendering input partials it cannot resolve ») pour éviter la latence de
+la 4096 sur les up. Mais l'utilisateur a tranché : **la netteté d'attaque est
+secondaire dans le grave** — ce qui débloque exactement ce compromis.
+
+### Sur la limite de résolution (échange avec l'utilisateur)
+
+- Δf = 1/T : la résolution dépend de la **durée** de fenêtre, pas de N ni de fs.
+  Monter à 96/192 kHz ne change **rien** (même T ⇒ même Δf ; ou N doublé ⇒ même
+  latence, 2× le calcul). C'est l'incertitude temps-fréquence, une loi physique.
+- « Interpréter une note sur une fraction de période » : possible pour une
+  sinusoïde **isolée** (3 échantillons via Prony/ESPRIT), mais deux murs sur le
+  vrai signal — (a) le bruit (variance ∝ 1/(SNR·T³), d'où le « glougloutement »
+  du §22 sur signal non-stationnaire), (b) **séparer** deux partiels distants de
+  Δf exige de voir leur **battement** (période 1/Δf, longue), pas leur période
+  de signal (1/f, courte). L'accord grave est un problème de séparation → régi
+  par la longue échelle. Pas de raccourci ; on assume les ~85 ms dans le grave.
+
+### Step 1 — voix +1 en fenêtre longue (`long_only`) ✓
+
+`MultiVocoder::long_only(bool)` : renvoie directement la sortie pleine bande de
+la fenêtre longue, **sans** la FFT courte, sans les hints §24, sans les biquads
+du crossover — donc plus propre ET moins cher. Câblé dans `pogged_dsp` sur les
+voix up-shift (`VOICE_RATIO > 1,05` : V_UP5/UP1/UP2/UP1D/UP2D) ; V_DRYD (unisson
+désaccordé, pas de shift) garde le split basse latence. Mesuré sur le plugin
+réel : graves 0,77 → **0,86**, aigus 1,00 — reproduit exactement le rendu que
+l'utilisateur a désigné comme le meilleur. Coût : `reinject_test` passe de ~44 à
+~84 ms de corps tonal (la latence 4096), l'attaque restant à 0 ms via la
+réinjection §18. Audit vert.
+
+### Step 2 — crossover up adaptatif référencé entrée (à venir)
+
+Récupérer l'attaque nette des aigus : fenêtre 4096 quand le partiel d'entrée est
+grave, 2048 quand il est aigu (crossover référencé entrée, ×ratio). C'est la
+vraie cible « deux bandes / indépendance au registre ». Après validation à
+l'oreille du step 1 sur un jeu qui sollicite l'aigu.

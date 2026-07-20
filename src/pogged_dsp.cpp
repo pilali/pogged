@@ -501,11 +501,18 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
 #ifndef POGGED_PV_N
-        // Fixed output-side crossover (§20): the §15 input-referred rule
-        // (×ratio) is knowingly NOT applied — it would move the up voices'
-        // 250-1000 Hz output onto the long window, and that latency is out
-        // of spec. The short window rendering input partials it cannot
-        // always resolve is the accepted §20 trade, tracked by shimmer_test.
+        // §29: the UP-shift voices render from the LONG window only. The §20
+        // trade (fixed low crossover, short window rendering input partials it
+        // cannot resolve) was the source of the "bass confusion" the user heard
+        // on the +1 voice — low notes/chords have densely-spaced input partials
+        // whose harmonics reach >XOVER output and got routed to the 23 Hz-bin
+        // short window. Measured on the user's own take: bass harmonicity 0.77
+        // -> 0.86 long-only, treble unchanged (~1.0); confirmed by ear. The
+        // short window only bought attack tightness, secondary in the bass per
+        // the user. V_DRYD (unity, a unison detune) has no shift and keeps the
+        // low-latency split. See MultiVocoder::long_only.
+        if (VOICE_RATIO[v] > 1.05f) p->pv[v].long_only(true);
+        // Output-side crossover, used only by V_DRYD now (the split path).
         p->pv[v].set_xover(VOC_XOVER_OUT);
         // §20 frequency smoothing: LONG window only. Measured on the full
         // engine: smoothing the short window is stable-but-MISTUNED on its
