@@ -680,12 +680,15 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float dryfilt_t = (p_->dry_filter > 0.5f) ? 1.0f : 0.0f;
     const float drydet_t  = (p_->dry_detune > 0.5f) ? 1.0f : 0.0f;
 
-    const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
-    const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
 #ifdef POGGED_DYN_FOCUS
+    // §30: the static-Focus crossfade (focus_t/focus_c) is replaced by the
+    // onset-driven hold/rise/fall below, so it is not computed here.
     const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
     const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
     const float hyb_fall_c = 1.0f - std::exp(-1.0f / (HYB_FALL_MS * 0.001f * sr));
+#else
+    const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
+    const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
 #endif
 
     const float range_t = std::clamp(p_->range_mode, 0.0f, 2.0f);
