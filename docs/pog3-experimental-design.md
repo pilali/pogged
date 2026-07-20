@@ -1345,3 +1345,65 @@ le sub perd de l'extension — cas marginal pour une octave-basse ; `VOC_SUB_FMA
 est ajustable. Leçon actée : **mesurer sur le vrai signal de l'instrument, pas
 sur du synthétique** — trois mois de traque d'un artefact que le synthétique ne
 pouvait pas reproduire.
+
+---
+
+## 27. PLAN — qualité fondamentale du pitch-shifting (la netteté POG3)
+
+Tournant de méthode, acté après des mois d'écart entre mes chiffres et
+l'oreille de l'utilisateur. Deux règles désormais **contraignantes** :
+
+1. **Mesurer sur le VRAI signal de l'instrument**, jamais sur du synthétique.
+   Le synthétique (sommes de sinusoïdes) ne reproduit PAS les défauts audibles
+   (§26 : l'artefact F# était invisible en synthèse, évident sur la guitare ;
+   §27 : le sub que mes métriques déclaraient « fonctionnel » est jugé immonde
+   à l'oreille). L'utilisateur fournit dry + wet ; on travaille contre ça.
+2. **L'oreille est le seul juge de succès.** Les métriques sont des outils de
+   DIAGNOSTIC (localiser un défaut), jamais des critères de victoire. On ne
+   livre que des rendus A/B que l'utilisateur tranche. Plus jamais « le dB
+   s'améliore donc c'est mieux ».
+
+### Le diagnostic (voix sub ÷2, pire cas, sur signal réel)
+
+L'utilisateur décrit, sur le sub : notes « confuses, mal définies », effet
+« glougloutant », « restes » de dry, très loin de la netteté d'un POG3. Mesuré
+sur son enregistrement :
+- **Étalement d'attaque 3 à 8×** : des attaques qui montent en 3-30 ms au dry
+  mettent 90-170 ms au sub (≈ la durée de la fenêtre longue). C'est le défaut
+  le plus gros et le plus objectif — la note « se remplit » au lieu de claquer,
+  d'où le manque de définition. Structurel au traitement par trames.
+- **Glouglou** = modulation à la cadence de trame + incohérence de phase +
+  interpolation spectrale linéaire (grossière, pire en ÷2 où le spectre est
+  comprimé).
+- **Restes de dry** = bruit/inharmonique (médiator, souffle) transposé à
+  travers le vocodeur, qui ne le supporte pas.
+
+### Les quatre pistes (demande utilisateur), par impact décroissant
+
+1. **Transitoires + attaques.** Détection d'onset robuste par voix ; à
+   l'attaque, rendu non-étalé (re-verrouillage de phase, réinitialisation
+   d'historique, ou fenêtre courte transitoire). Cible : la DÉFINITION.
+2. **Interpolation haute qualité.** Remplacer l'interpolation LINÉAIRE du
+   spectre (`_ana_cx[j0] + t·(…)`) par une interpolation cohérente en phase
+   (noyau analytique). Cible : le GLOUGLOU.
+3. **Séparation tonal / bruité.** Isoler l'harmonique (transposé proprement)
+   du bruité/transitoire (laissé passer ou traité à part). Cible : les RESTES.
+4. **Cohérence de phase**, en soutien des trois autres.
+
+### Stratégie de départ : la RÉGRESSION d'abord (indice utilisateur)
+
+L'utilisateur signale que **le sub1 était largement meilleur au commit
+351591f** (le point de référence latence/qualité). Depuis, le moteur a reçu
+§15, §21 (OS=8), §22 (Prony), §24 (hints), §25 (crossover), §26 (plafond sub),
+§18 (réinjection). L'un d'eux a dégradé le sub. **Avant de construire de la
+nouvelle machinerie de transitoires, on bissecte** : rendre le sub sur le vrai
+signal à 351591f puis à chaque ajout, identifier le coupable, réparer/retirer.
+Retrouver un acquis perdu prime sur l'invention. Ce n'est qu'ensuite, sur cette
+base assainie, qu'on attaque les pistes 1→4 pour dépasser 351591f vers la
+netteté POG3.
+
+### Méthode de validation
+
+Chaque étape : un A/B sur l'enregistrement de l'utilisateur (même note,
+avant/après), jugé à l'oreille sur UN critère précis (netteté d'attaque, ou
+glouglou, etc.). Aucune régression d'un critère déjà acquis. Documenté ici.
