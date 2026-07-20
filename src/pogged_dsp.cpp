@@ -511,7 +511,9 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // short window only bought attack tightness, secondary in the bass per
         // the user. V_DRYD (unity, a unison detune) has no shift and keeps the
         // low-latency split. See MultiVocoder::long_only.
+#ifndef POGGED_UP_LONGONLY_OFF
         if (VOICE_RATIO[v] > 1.05f) p->pv[v].long_only(true);
+#endif
         // Output-side crossover, used only by V_DRYD now (the split path).
         p->pv[v].set_xover(VOC_XOVER_OUT);
         // §20 frequency smoothing: LONG window only. Measured on the full
