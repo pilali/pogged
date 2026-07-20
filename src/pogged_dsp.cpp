@@ -284,6 +284,25 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 // during the fade; at rest exactly one does.
 static constexpr float FOCUS_XFADE_MS = 150.0f;
 
+// §30 — dynamic Focus (the POG-class hybrid). The vocoder renders a clean but
+// ~85 ms-late octave body; the granular engine renders a tight but warbly one.
+// The vocoder's latency only hurts at the ONSET (the "doublon" under the 0-
+// latency dry); its warble-free body wins once the note is ringing. So on each
+// onset we hold the GRANULAR engine (tight, fills the latency gap), then switch
+// to the VOCODER for the sustained body:
+//   - HOLD: granular-only after the onset, long enough to cover the vocoder's
+//     latency so the switch lands where the vocoder is already present;
+//   - RISE: a SHORT switch to the vocoder. The two engines are phase-incoherent,
+//     so their overlap combs — a short crossover minimises that band (the user
+//     A/B'd fast vs slow and slow-in-steady-state; the fast switch, "D1", won);
+//   - FALL: a fast-but-smooth drop back to granular on the next onset (no hard
+//     step, which would click the notes still ringing).
+// Equal-power (sqrt) crossfade, so the decorrelated pair does not dip -3 dB
+// mid-fade. Values chosen by ear on the user's own take (D1: 100/12/8 ms).
+static constexpr float HYB_HOLD_MS = 100.0f;
+static constexpr float HYB_RISE_MS = 12.0f;
+static constexpr float HYB_FALL_MS = 8.0f;
+
 // ── Transient reinjection (§18) ──────────────────────────────────────────────
 // The wet's FELT latency is its attack's: the pitched body cannot arrive
 // earlier (Gabor — §16/§17), but the pick's broadband snap can. On each onset
@@ -332,6 +351,7 @@ struct PoggedDsp {
     bool          pv_live[N_VOICES] = {};
 #endif
     float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
+    int           hyb_hold = 0;             // §30: samples left holding granular
 
     // Voices are panned before the mix, so the wet bus is stereo by the time
     // it reaches the filter — hence one filter per channel, same coefficients.
@@ -574,6 +594,7 @@ void pogged_dsp_reset(PoggedDsp* p)
 #endif
     }
     p->g_focus = 0.0f;
+    p->hyb_hold = 0;
     p->filter_l.reset();
     p->filter_r.reset();
     p->env.reset();
@@ -655,6 +676,11 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 
     const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
     const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
+#ifdef POGGED_DYN_FOCUS
+    const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
+    const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
+    const float hyb_fall_c = 1.0f - std::exp(-1.0f / (HYB_FALL_MS * 0.001f * sr));
+#endif
 
     const float range_t = std::clamp(p_->range_mode, 0.0f, 2.0f);
     if (range_t != p->cached_range) {
@@ -920,8 +946,29 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // at rest (g_focus pinned at 0 or 1) exactly one does, so the idle cost
         // is one engine. The vocoder's OLA needs ~N samples to fill, which the
         // 150 ms fade covers — it ramps in from silence rather than clicking.
+#ifdef POGGED_DYN_FOCUS
+        // §30: dynamic Focus — drive g_focus from the onset detector instead of
+        // the static Focus param. Hold granular (0) for HYB_HOLD after each
+        // onset (covering the vocoder's latency), then switch to vocoder (1)
+        // over the short HYB_RISE; fall back fast-but-smooth on the next onset.
+        if (onset) p->hyb_hold = hyb_hold_n;
+        const float hyb_target = (p->hyb_hold > 0) ? 0.0f : 1.0f;
+        if (p->hyb_hold > 0) --p->hyb_hold;
+        const float hyb_coef = (hyb_target < p->g_focus) ? hyb_fall_c : hyb_rise_c;
+        p->g_focus += hyb_coef * (hyb_target - p->g_focus);
+#else
         p->g_focus += focus_c * (focus_t - p->g_focus);
+#endif
         const float fx = p->g_focus;
+#ifdef POGGED_DYN_FOCUS
+        // §30: equal-power crossfade — the granular and vocoder renderings are
+        // phase-incoherent, so a linear fade would dip up to -3 dB mid-cross.
+        const float g_gran = std::sqrt(std::max(0.0f, 1.0f - fx));
+        const float g_voc  = std::sqrt(std::max(0.0f, fx));
+#else
+        const float g_gran = 1.0f - fx;
+        const float g_voc  = fx;
+#endif
         // The wet swell per engine: granular takes the global envelope (a
         // POG2-style duck-and-reswell on every onset), the vocoder swells per
         // bin inside _process_frame. V_DRYD belongs to the DRY path and takes
@@ -932,8 +979,18 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             return ge * p->sh[v].process(ring, mask, p->wpos);
 #else
             float s = 0.0f;
-            if (fx < 0.9999f) s += (1.0f - fx) * ge * p->sh[v].process(ring, mask, p->wpos);
-            if (fx > 1e-4f) {
+#ifdef POGGED_DYN_FOCUS
+            // §30: g_focus alternates every onset, so BOTH engines must be
+            // advanced every sample — skipping one freezes its streaming state
+            // (OLA / grain taps) and clicks when it resumes. Gain may be 0; the
+            // call must not be.
+            constexpr bool always = true;
+#else
+            // Static Focus rests at 0 or 1, so exactly one engine runs at rest.
+            constexpr bool always = false;
+#endif
+            if (always || g_gran > 1e-4f) s += g_gran * ge * p->sh[v].process(ring, mask, p->wpos);
+            if (always || g_voc > 1e-4f) {
                 float w;
                 if (v == V_SUB1 || v == V_SUB2) {
                     w = p->pv_sub[v].process(ring, mask, p->wpos);
@@ -945,7 +1002,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
                 } else {
                     w = p->pv[v].process(ring, mask, p->wpos);
                 }
-                s += fx * w;
+                s += g_voc * w;
             }
             return s;
 #endif

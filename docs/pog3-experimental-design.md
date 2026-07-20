@@ -1550,9 +1550,67 @@ l'utilisateur a désigné comme le meilleur. Coût : `reinject_test` passe de ~4
 ~84 ms de corps tonal (la latence 4096), l'attaque restant à 0 ms via la
 réinjection §18. Audit vert.
 
-### Step 2 — crossover up adaptatif référencé entrée (à venir)
+### Step 2 — crossover up adaptatif référencé entrée (en suspens)
 
 Récupérer l'attaque nette des aigus : fenêtre 4096 quand le partiel d'entrée est
 grave, 2048 quand il est aigu (crossover référencé entrée, ×ratio). C'est la
-vraie cible « deux bandes / indépendance au registre ». Après validation à
-l'oreille du step 1 sur un jeu qui sollicite l'aigu.
+vraie cible « deux bandes / indépendance au registre ». Mis en suspens : sur le
+preset complet, l'utilisateur a jugé la latence 4096 **inacceptable** (« doublon
+désagréable » sous le dry zéro-latence) quelle que soit la finesse — d'où le
+pivot §30 vers la classe temporelle.
+
+## §30 — la latence est rédhibitoire : pivot vers la classe POG (Focus dynamique)
+
+### Le verdict (à l'oreille, preset complet)
+
+Le rendu 4096 est *propre* mais sa latence (~84 ms de corps tonal) crée un
+**doublon** pénible sous le dry zéro-latence — inacceptable en jeu. Aucune
+finesse de crossover ne le règle : c'est de la physique (Δf = 1/T).
+
+### La question de l'utilisateur : comment le POG y arrive ?
+
+Le POG rend une octave polyphonique propre à latence quasi nulle, bien avant les
+modèles neuronaux. Réponse : **il n'est pas de la même classe d'algorithme.**
+- **Spectral (notre vocodeur)** : analyse → *sépare* les partiels → resynthétise.
+  Séparer exige de la résolution → fenêtre longue → latence. Fidèle mais lent.
+- **Temporel (le POG)** : *rééchantillonne* la forme d'onde entière (relire plus
+  vite/lentement). Aucune séparation → aucune résolution requise → **pas de
+  latence**, et la polyphonie passe naturellement (tous les partiels décalés
+  ensemble). Prix : coloration « orgue » et warble en accord (l'artefact de
+  fondu de grains, qu'EHX a assumé comme signature). Pas plus *fidèle* — plus
+  *jouable*, parce que pas de doublon.
+
+On a déjà cette classe : `StreamShifter` (Focus=0), deux têtes de lecture à
+débit fixe en fondu Hann, latence ~20 ms. Nos échecs granulaires passés
+*pulsaient* car pitch-synchronisés (PSOLA) ; le débit fixe *warble* au lieu de
+pulser — la bonne variante.
+
+### L'hybride : Focus dynamique (granulaire à l'attaque, vocodeur au corps)
+
+La latence du vocodeur ne gêne qu'à l'**onset** (le doublon) ; son corps sans
+warble gagne une fois la note tenue. Donc on croise dans le **temps** (âge de la
+note), pas en fréquence :
+- **HOLD** (100 ms) : granulaire seul après l'onset, couvrant la latence du
+  vocodeur pour que le switch atterrisse là où le vocodeur est déjà présent ;
+- **RISE** (12 ms) : switch **court** vers le vocodeur. Les deux moteurs sont
+  déphasés → leur recouvrement fait un peigne ; l'utilisateur a A/B testé
+  lent/rapide/régime-établi et le **switch rapide (« D1 »)** a gagné (recouvrement
+  minimal) ;
+- **FALL** (8 ms) : chute douce vers le granulaire au prochain onset (pas de
+  marche dure, qui cliquerait les notes tenues) ;
+- crossfade **puissance constante** (sqrt), pour ne pas creuser −3 dB au milieu.
+
+Réglages HOLD/RISE/FALL choisis à l'oreille sur la prise réelle (100/12/8 ms).
+
+### Implémentation (`-DPOGGED_DYN_FOCUS`, WIP)
+
+`g_focus` (le crossfade granulaire↔vocodeur qui existait déjà, ex-paramètre
+Focus statique) est piloté par le détecteur d'onset (`OnsetDetector det`, déjà
+présent). Points clés :
+- **les deux moteurs sont appelés à chaque échantillon** (gain éventuellement
+  nul) : sauter l'un fige son état de streaming (OLA / têtes de grains) et
+  clique à la reprise — le vrai piège de l'intégration ;
+- crossfade puissance constante ;
+- s'expédie **derrière un flag** pour l'instant (défaut inchangé, audit vert) ;
+  reproduit le timing D1 dans le plugin réel (attaques ~0 ms vs ~84 ms du
+  vocodeur pur). UX à décider (remplacer le bouton Focus, ou nouveau mode).
