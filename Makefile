@@ -63,6 +63,21 @@ ifdef XBAND
     endif
 endif
 
+# §30 experiment: HYBRID=1 enables the dynamic-Focus POG-class hybrid — the
+# granular engine renders the tight ATTACK (low latency), the vocoder the clean
+# sustained BODY, crossfaded per note by the onset detector. This is the fix for
+# the ~81 ms "doublon" the vocoder alone leaves under the zero-latency dry.
+# HYBRID=1 also shortens the grains (12 ms up / 1.5 periods down) since the
+# granular only carries the brief attack, pulling the attack latency toward the
+# POG's ~12-20 ms. Off by default. Works with any TARGET, e.g.
+# `make TARGET=rpi5 HYBRID=1`. Override grains: `make HYBRID=1 GRAIN_UP=10 GRAIN_PER=1.4`.
+ifdef HYBRID
+    override CXXFLAGS += -DPOGGED_DYN_FOCUS
+    GRAIN_UP  ?= 12
+    GRAIN_PER ?= 1.5
+    override CXXFLAGS += -DPOGGED_GRAIN_UP_MS=$(GRAIN_UP).0f -DPOGGED_GRAIN_PERIODS=$(GRAIN_PER)f
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 

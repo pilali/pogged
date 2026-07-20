@@ -1614,3 +1614,16 @@ présent). Points clés :
 - s'expédie **derrière un flag** pour l'instant (défaut inchangé, audit vert) ;
   reproduit le timing D1 dans le plugin réel (attaques ~0 ms vs ~84 ms du
   vocodeur pur). UX à décider (remplacer le bouton Focus, ou nouveau mode).
+
+Build : `make TARGET=rpi5 HYBRID=1` (active `-DPOGGED_DYN_FOCUS` + grains courts
+12 ms/1,5 pér.). Grains ajustables : `HYBRID=1 GRAIN_UP=10 GRAIN_PER=1.4`.
+
+### Mesure sur prise matérielle réelle (dry vs wet alignés)
+
+L'utilisateur a fourni deux pistes alignées de la même prise (dry seul / wet =
+−1+ +1). Corrélation d'enveloppe : **lag global 81 ms**, et le profil de lag par
+onset colle **au vocodeur pur** (85/84/63/60 ms sur les accords), PAS à l'hybride
+(qui donnerait 12-25 ms). Diagnostic : le build testé était le **défaut (§29
+vocodeur)** — l'hybride, derrière le flag, n'y était pas. D'où le knob Makefile
+`HYBRID=1` pour tester le vrai hybride sur matériel. Latence attendue de
+l'hybride : attaques ~12-25 ms (le −1 plafonne ~15-22 ms, physique).
