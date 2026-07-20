@@ -517,6 +517,15 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
             p->pv_sub[v].set_ratio(VOICE_RATIO[v]);
 #ifndef POGGED_PV_N
             p->pv_sub[v].prony(false, false);   // bare, like 351591f — no §22
+#if defined(POGGED_DYN_FOCUS) && !defined(POGGED_SUB_SPLIT)
+            // §30 CPU: under the hybrid the GRANULAR engine renders the sub's
+            // attack, so its vocoder only carries the sustained body — it no
+            // longer needs the short (2048) window for attack tightness. Drop
+            // it to long-only (1 FFT instead of 2), same §29 logic as the up
+            // voices, and cleaner in the bass too. -DPOGGED_SUB_SPLIT keeps the
+            // two-window split (for A/B).
+            p->pv_sub[v].long_only(true);
+#endif
             // §28: octave-lock anchor (resynthesised harmonic series on the
             // shifted fundamental) sits UNDER the raw sub to stop the octave
             // wandering when the input fundamental is weak.

@@ -1616,7 +1616,22 @@ présent). Points clés :
   vocodeur pur). UX à décider (remplacer le bouton Focus, ou nouveau mode).
 
 Build : `make TARGET=rpi5 HYBRID=1` (active `-DPOGGED_DYN_FOCUS` + grains courts
-12 ms/1,5 pér.). Grains ajustables : `HYBRID=1 GRAIN_UP=10 GRAIN_PER=1.4`.
+12 ms/1,5 pér. + OS=4 sur les up). Réglages : `HYBRID=1 GRAIN_UP=10 GRAIN_PER=1.4 PV_OS=8`.
+
+### CPU — tenir le buffer JACK 64
+
+L'hybride tenait à 128 mais faisait des xruns à 64 (les deux moteurs tournent).
+Deux cuts, tous deux sans coût sonore parce que le granulaire prend désormais
+l'attaque :
+- **OS=4 sur les voix up** (au lieu de 8) : moitié moins de FFT ; l'utilisateur
+  avait confirmé OS=8≈OS=4 à l'oreille sur les up ;
+- **sub en `long_only`** sous l'hybride : le vocodeur du sub ne fait plus que le
+  corps (le granulaire fait l'attaque), donc plus besoin de la fenêtre courte —
+  1 FFT au lieu de 2.
+Mesuré sur la prise réelle, blocs de 64 : **mean 73 → 38 µs/bloc**, pire-bloc
+99,9 pct 449 → ~360 µs — sous le coût du vocodeur pur d'avant l'hybride. Ces cuts
+sont dans le knob `HYBRID=1` (et le sub long_only gaté par `POGGED_DYN_FOCUS`,
+désactivable via `POGGED_SUB_SPLIT` pour l'A/B).
 
 ### Mesure sur prise matérielle réelle (dry vs wet alignés)
 

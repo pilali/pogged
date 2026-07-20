@@ -76,6 +76,14 @@ ifdef HYBRID
     GRAIN_UP  ?= 12
     GRAIN_PER ?= 1.5
     override CXXFLAGS += -DPOGGED_GRAIN_UP_MS=$(GRAIN_UP).0f -DPOGGED_GRAIN_PERIODS=$(GRAIN_PER)f
+    # §30 CPU: the hybrid runs both engines, so trim the vocoder to fit tight
+    # JACK buffers (64). OS=4 on the up voices (the user confirmed OS=8≈OS=4 by
+    # ear) halves their FFT rate; the sub's short window is dropped in-code
+    # under POGGED_DYN_FOCUS (its attack now comes from the granular). Measured
+    # on the real take: mean 73→38 us/block, worst-block below the pre-hybrid
+    # vocoder. Override with e.g. `HYBRID=1 PV_OS=8` to keep OS=8 on the ups.
+    PV_OS ?= 4
+    override CXXFLAGS += -DPOGGED_PV_OS=$(PV_OS)
 endif
 
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
