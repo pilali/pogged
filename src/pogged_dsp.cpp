@@ -26,7 +26,10 @@ using SubVocoder    = StreamVocoder;   // §27: single 2048 window is already OS
 // out (chord worst case 74.5 -> 71.9 dB, no regression elsewhere once the
 // estimator baseline was decoupled from the hop). Costs 2x the FFT work —
 // affordable since the real FFT (§19).
-using PoggedVocoder = MultiVocoder<4096, 2048, 8>;
+#ifndef POGGED_PV_OS
+#define POGGED_PV_OS 8   // up-voice overlap factor; -DPOGGED_PV_OS=4 for the A/B
+#endif
+using PoggedVocoder = MultiVocoder<4096, 2048, POGGED_PV_OS>;
 // §27: the DOWN voices (÷2, ÷4) get their OWN engine at OS=4, bare. The whole
 // §20-§26 arc (OS=8, §22 Prony, §24 hints, §26 input cap) was tuned for the UP
 // voices' chord artefacts and applied globally; on the sub it SMEARED attacks
