@@ -22,24 +22,7 @@
 // currently playing, which suppresses the splice warble on low notes.
 class StreamShifter {
 public:
-    // §32 warble experiments (all default to the shipping behaviour):
-    //  - GRAIN_TAPS  : overlapping read heads. More taps = smoother OLA (the
-    //                  Hann window sum is N/2 for any N, so we scale by 2/N).
-    //  - GRAIN_JITTER: samples of random extra lag at respawn — breaks the
-    //                  PERIODICITY of the splice, spreading the warble into
-    //                  broadband noise (less tonal, less audible) instead of a
-    //                  steady AM tone.
-    //  - GRAIN_PLOCK : stronger correlation phase-lock (finer search + a longer,
-    //                  period-scaled window) at respawn.
-#ifndef POGGED_GRAIN_TAPS
-#define POGGED_GRAIN_TAPS 2
-#endif
-#ifndef POGGED_GRAIN_JITTER
-#define POGGED_GRAIN_JITTER 0
-#endif
-    static constexpr int N_TAPS   = POGGED_GRAIN_TAPS;
-    static constexpr int MAX_TAPS = 4;
-    static constexpr int JITTER   = POGGED_GRAIN_JITTER;
+    static constexpr int N_TAPS = 2;
     // Protective lag behind the write head: covers the Catmull-Rom lookahead
     // (i1+2) plus a safety margin against block-boundary effects.
     static constexpr int MARGIN = 160;
@@ -116,10 +99,10 @@ public:
         const int g = _grain;
 
         if (!_init) {
-            // Stagger the taps by grain/N so the Hann envelopes sum to a
-            // constant (N/2) from the very first sample.
+            // Stagger the taps by grain/2 so the Hann envelopes sum to 1
+            // from the very first sample.
             for (int k = 0; k < N_TAPS; ++k) {
-                _t[k].cursor = k * (g / N_TAPS);
+                _t[k].cursor = k * (g / 2);
                 _t[k].rpos   = (double)wpos - _lag0()
                              - (double)_t[k].cursor * (double)_ratio;
             }
@@ -130,8 +113,7 @@ public:
         for (int k = 0; k < N_TAPS; ++k) {
             Tap& t = _t[k];
 
-            // Complementary Hann: 0.5*(1-cos(2π c/g)); N staggered taps sum to
-            // N/2 (the cos terms are N equally-spaced phases → they cancel).
+            // Complementary Hann: 0.5*(1-cos(2π c/g)); staggered taps sum to 1.
             const float amp =
                 0.5f * (1.0f - std::cos(6.28318531f * (float)t.cursor / (float)g));
             out += amp * _read(ring, mask, t.rpos);
@@ -144,15 +126,10 @@ public:
                     const Tap& ref = _t[(k + 1) % N_TAPS];
                     anchor = _aligned(ring, mask, anchor, ref.rpos);
                 }
-                // §32 jitter: a random extra lag at respawn breaks the
-                // periodicity of the splice, so the residual warble is
-                // broadband noise rather than a steady AM tone.
-                if (JITTER > 0) anchor -= (double)(_rand() % (uint32_t)(JITTER + 1));
                 t.rpos = anchor;
             }
         }
-        // N staggered Hann taps sum to N/2; scale to unity gain.
-        return out * (2.0f / (float)N_TAPS);
+        return out;
     }
 
 private:
@@ -179,33 +156,23 @@ private:
 
     // Correlation-aligned respawn (Megalo's GrainPlayer::_aligned_pos on a
     // ring): scan extra lag [0, _align) and keep the candidate whose signal
-    // best correlates with what the reference tap is playing right now, so
-    // the incoming grain enters in phase with the outgoing one during the
-    // crossfade. Cost ≈ (_align/2)·K MACs per respawn — respawns happen a
-    // few tens of times per second, noise next to the per-sample work.
-    // xorshift32 — a couple of ops, no state beyond the seed. Only used at
-    // respawn (a few tens of times a second) for the §32 jitter.
-    uint32_t _rand() noexcept {
-        _rng ^= _rng << 13; _rng ^= _rng >> 17; _rng ^= _rng << 5; return _rng;
-    }
-
+    // best correlates with what the reference tap is playing right now, so the
+    // incoming grain enters in phase with the outgoing one during the crossfade.
+    //
+    // §32 phase-lock: the correlation must SPAN a good fraction of the output
+    // period to lock a LOW tone's phase — a fixed 0.5 ms window is near-DC for
+    // the ÷2 voice, so the aligner did almost nothing on the sub and left its
+    // warble (the user judged this the one warble fix that worked). Correlating
+    // ~500 consecutive samples per respawn would lock it but blew the CPU budget
+    // (66 % of a 64-frame block), so we SPAN the period yet DECIMATE: 48 fixed
+    // points spread across it. Same phase-lock, ~2x the baseline cost (not 40x);
+    // measured latency-neutral (the search range _align is unchanged). Cost ≈
+    // (_align/2)·48 MACs per respawn — respawns are a few tens of times a second.
     double _aligned(const float* ring, uint32_t mask,
                     double anchor, double ref_pos) const noexcept {
-#ifdef POGGED_GRAIN_PLOCK
-        // §32 phase-lock: the correlation must SPAN a good fraction of the
-        // output period to lock a low tone's phase (a 0.5 ms window is near-DC
-        // for the ÷2 voice) — but correlating ~500 consecutive samples per
-        // respawn blew the CPU budget (66 % of a 64-frame block). So span the
-        // period but DECIMATE: K fixed points spread across it. Same phase-lock,
-        // ~2x the baseline cost instead of ~40x.
-        constexpr int K = 48;
+        constexpr int K = 48, STEP = 2;
         const double stride = (double)std::clamp(_grain / 3, K, 4096)
                             / (double)K * (double)_ratio;
-#else
-        constexpr int K = 24;
-        const double stride = (double)_ratio;
-#endif
-        constexpr int STEP = 2;
         float ref[K];
         {
             double p = ref_pos;
@@ -237,5 +204,4 @@ private:
     int   _grain = 1200;
     int   _align = 0;
     bool  _init  = false;
-    uint32_t _rng = 0x9e3779b9u;   // §32 jitter PRNG seed
 };

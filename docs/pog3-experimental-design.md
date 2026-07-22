@@ -1680,3 +1680,35 @@ seul le mécanisme de capture l'empêchait d'aboutir.
 Vérifié en simulation : coup de talon → octaves glissent A/2 → B/2 (110 → 165 Hz)
 sur ~1,5 s sans repasser en live. `freeze_test` vert. Validé à l'oreille par
 l'utilisateur, puis **passé en défaut** (le chemin V1 est retiré).
+
+## §32 — anti-warble du granulaire : le phase-lock décimé
+
+### Les trois leviers testés (A/B à l'oreille de l'utilisateur)
+
+Piste ouverte : réduire le warble de la phase granulaire de l'hybride. Trois
+leviers temporels (jamais de retour à la latence), rendus sur le sub granulaire
+de la prise réelle :
+1. **plus de taps** (4 têtes de lecture au lieu de 2) — « très sale » ;
+2. **jitter de respawn** (lag aléatoire pour casser la périodicité) — « très
+   sale » ;
+3. **phase-lock renforcé** (corrélation à longue portée) — **« sonne très
+   bien »**. Le combo des trois : « particulièrement mauvais ».
+
+Verdict : seul le levier 3 gagne. Les deux autres retirés.
+
+### Le levier gagnant, rendu abordable
+
+L'aligneur de grains corrélait une fenêtre fixe de 24 échantillons (0,5 ms) —
+quasi-DC pour l'octave grave (÷2 à ~41 Hz, période 24 ms), donc inopérant dans
+le grave, d'où le warble. La corriger sur ~500 échantillons **consécutifs**
+verrouille la phase mais coûte 66 % d'un bloc de 64 (99,9 pct 355 → 880 µs) —
+injouable.
+
+Solution : **span la période mais DÉCIME** — 48 points étalés sur `grain/3` au
+lieu de ~500 consécutifs. Même verrouillage de phase, coût ~2× la base au lieu
+de ~40× : mean 38 → 42 µs, **pire-bloc inchangé** (352 vs 355 µs). Latence
+**neutre** (la plage de recherche `_align` ne change pas ; mesuré 3 vs 4 ms
+d'onset). Rendu bit-identique au plock cher validé par l'utilisateur.
+
+**Passé en défaut** (le moteur granulaire, donc l'attaque de l'hybride ET le
+mode Granular en bénéficient). Les leviers taps/jitter retirés. Audit vert.
