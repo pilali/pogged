@@ -698,7 +698,6 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // onset-driven hold/rise/fall (granular attack, vocoder body).
     const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
     const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
-    const float hyb_fall_c = 1.0f - std::exp(-1.0f / (HYB_FALL_MS * 0.001f * sr));
 #else
     const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
 #endif
@@ -980,10 +979,16 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         } else if (fsel < 1.5f) {              // 1 = vocoder only
             hyb_target = 1.0f; hyb_coef = focus_c;
         } else {                               // 2 = hybrid (onset-driven)
-            if (onset) p->hyb_hold = hyb_hold_n;
+            // SNAP to granular on the onset sample itself — a smoothed fall
+            // would ramp the granular gain up over its first few ms and soften
+            // the very pluck transient that makes the attack feel instant. The
+            // onset's own broadband transient masks the step on notes still
+            // ringing. Then hold granular through the vocoder's latency and
+            // rise to the vocoder body over the short HYB_RISE.
+            if (onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f; }
             hyb_target = (p->hyb_hold > 0) ? 0.0f : 1.0f;
             if (p->hyb_hold > 0) --p->hyb_hold;
-            hyb_coef = (hyb_target < p->g_focus) ? hyb_fall_c : hyb_rise_c;
+            hyb_coef = hyb_rise_c;
         }
         p->g_focus += hyb_coef * (hyb_target - p->g_focus);
 #else
