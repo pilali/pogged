@@ -192,19 +192,26 @@ private:
     double _aligned(const float* ring, uint32_t mask,
                     double anchor, double ref_pos) const noexcept {
 #ifdef POGGED_GRAIN_PLOCK
-        // §32 phase-lock: a longer, period-scaled correlation window and a
-        // finer (step-1) search, to lock the incoming grain's phase harder.
-        const int K = std::clamp(_grain / 3, 24, MAXK);
-        const int STEP = 1;
+        // §32 phase-lock: the correlation must SPAN a good fraction of the
+        // output period to lock a low tone's phase (a 0.5 ms window is near-DC
+        // for the ÷2 voice) — but correlating ~500 consecutive samples per
+        // respawn blew the CPU budget (66 % of a 64-frame block). So span the
+        // period but DECIMATE: K fixed points spread across it. Same phase-lock,
+        // ~2x the baseline cost instead of ~40x.
+        constexpr int K = 48;
+        const double stride = (double)std::clamp(_grain / 3, K, 4096)
+                            / (double)K * (double)_ratio;
 #else
-        constexpr int K = 24, STEP = 2;
+        constexpr int K = 24;
+        const double stride = (double)_ratio;
 #endif
-        float ref[MAXK];
+        constexpr int STEP = 2;
+        float ref[K];
         {
             double p = ref_pos;
             for (int i = 0; i < K; ++i) {
                 ref[i] = ring[(uint64_t)(int64_t)p & mask];
-                p += (double)_ratio;
+                p += stride;
             }
         }
         int   best_d = 0;
@@ -216,15 +223,13 @@ private:
                 const float v = ring[(uint64_t)(int64_t)p & mask];
                 r += ref[i] * v;
                 e += v * v;
-                p += (double)_ratio;
+                p += stride;
             }
             const float rn = r / std::sqrt(e);
             if (rn > best_r) { best_r = rn; best_d = d; }
         }
         return anchor - (double)best_d;
     }
-
-    static constexpr int MAXK = 1024;   // correlation-window buffer cap (PLOCK)
 
     Tap   _t[N_TAPS];
     float _ratio     = 1.0f;   // read speed; may be modulated per block
