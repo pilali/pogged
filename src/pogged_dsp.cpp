@@ -347,6 +347,13 @@ static constexpr float FRZ_GLIDE_MAX_MS = 2000.0f;
 // Swapping the ring between live and loop is a hard cut; every hard switch in
 // this engine has clicked, so it is crossfaded like all the others.
 static constexpr float FRZ_XFADE_MS = 25.0f;
+#ifdef POGGED_FREEZE_V2
+// V2 gesture: a heel touch SHORTER than this re-captures + glides (octaves stay
+// frozen); a heel hold LONGER unfreezes (octaves go live). Lets you slide from
+// one frozen note to the next without the return-to-heel resetting everything —
+// the capture reads a DEDICATED always-live buffer, not the shared ring.
+static constexpr float FRZ_UNFREEZE_MS = 150.0f;
+#endif
 // Filter coefficients are refreshed on this stride while the sweep moves.
 // Per-sample would mean transcendentals per sample per channel; 16 samples is
 // a 3 kHz control rate at 48k, far above anything a filter sweep resolves.
@@ -408,6 +415,17 @@ struct PoggedDsp {
     FreezeLoop    frz;
     bool          frz_held = false;   // pedal off the heel on the last block
     float         g_frz    = 0.0f;    // live -> loop crossfade, 0..1
+#ifdef POGGED_FREEZE_V2
+    // §31: dedicated always-live history for freeze capture (never the loop),
+    // so a new note can be captured WITHOUT unfreezing — the fix for "return to
+    // heel resets everything". Plus the latched engage state and heel timer.
+    std::vector<float> frz_live;
+    uint32_t frz_live_mask = 0;
+    uint64_t frz_live_wpos = 0;
+    bool     frz_engaged   = false;   // octaves currently held (latched)
+    bool     frz_at_heel   = true;    // pedal at heel on the last block
+    int      frz_heel_smp  = 0;       // samples spent at heel since leaving off
+#endif
     // Detune-mix coefficient, ramped 0 → 0.5 so enabling/disabling detune
     // crossfades the (phase-independent) detuned voice in instead of hard-
     // switching to the 50/50 average, which was an audible click.
@@ -604,6 +622,15 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
 #endif
 
     p->frz.init(sample_rate);
+#ifdef POGGED_FREEZE_V2
+    {
+        const uint32_t fl = std::clamp(next_pow2((uint32_t)(0.5 * sample_rate)),
+                                       16384u, 65536u);
+        p->frz_live.assign(fl, 0.0f);
+        p->frz_live_mask = fl - 1;
+        p->frz_live_wpos = fl;
+    }
+#endif
     p->det.init(sr);
 #ifdef POGGED_DYN_FOCUS
     p->hyb_det.init(sr);
@@ -667,6 +694,13 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->frz.reset();
     p->frz_held      = false;
     p->g_frz         = 0.0f;
+#ifdef POGGED_FREEZE_V2
+    std::fill(p->frz_live.begin(), p->frz_live.end(), 0.0f);
+    p->frz_live_wpos = p->frz_live.size();
+    p->frz_engaged   = false;
+    p->frz_at_heel   = true;
+    p->frz_heel_smp  = 0;
+#endif
     p->p_dry = p->p_sub1 = p->p_sub2 = 0.0f;
     p->p_up5 = p->p_up1 = p->p_up2 = 0.0f;
     p->g_spread = 0.0f;
@@ -808,6 +842,31 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // whatever is being played, so the next rise captures the next note — which
     // is exactly the pedal move the manual describes.
     const float frz_t  = std::clamp(p_->freeze, 0.0f, 1.0f);
+#ifdef POGGED_FREEZE_V2
+    // §31: capture from the DEDICATED always-live buffer, so the octaves never
+    // have to go live to grab a new note. A heel touch shorter than
+    // FRZ_UNFREEZE_MS re-captures the current live note and GLIDES to it while
+    // the octaves stay frozen; a longer heel hold unfreezes (goes live). Every
+    // heel→off transition (and the first engage from live) captures — the
+    // FreezeLoop glides on all but the first (nothing to glide from).
+    const bool at_heel = frz_t <= 1e-3f;
+    if (at_heel) {
+        p->frz_heel_smp += (int)n_samples;
+        if (p->frz_heel_smp >= (int)(FRZ_UNFREEZE_MS * 0.001f * sr))
+            p->frz_engaged = false;
+    } else {
+        if (p->frz_at_heel || !p->frz_engaged) {
+            const float glide_ms = FRZ_GLIDE_MIN_MS
+                                 + frz_t * (FRZ_GLIDE_MAX_MS - FRZ_GLIDE_MIN_MS);
+            p->frz.capture(p->frz_live.data(), p->frz_live_mask, p->frz_live_wpos,
+                           (int)(glide_ms * 0.001f * sr));
+            p->frz_engaged = true;
+        }
+        p->frz_heel_smp = 0;
+    }
+    p->frz_at_heel = at_heel;
+    const float frz_target = (p->frz_engaged && p->frz.armed()) ? 1.0f : 0.0f;
+#else
     const bool  frz_on = frz_t > 1e-3f;
     if (frz_on && !p->frz_held) {
         const float glide_ms = FRZ_GLIDE_MIN_MS
@@ -817,6 +876,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     }
     p->frz_held = frz_on;
     const float frz_target = (frz_on && p->frz.armed()) ? 1.0f : 0.0f;
+#endif
     const float frz_c = 1.0f - std::exp(-1.0f / (FRZ_XFADE_MS * 0.001f * sr));
 
     // Which shifters run this block. A voice is live while its target OR its
@@ -915,6 +975,13 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // exactly as they would on the pedal.
         p->g_in += gc * (in_t - p->g_in);
         const float x = in[i] * p->g_in;
+
+#ifdef POGGED_FREEZE_V2
+        // §31: the dedicated freeze buffer always records the LIVE input, even
+        // while frozen — so capture() can grab a new note without unfreezing.
+        p->frz_live[p->frz_live_wpos & p->frz_live_mask] = x;
+        ++p->frz_live_wpos;
+#endif
 
         // Freeze feeds the ring the loop instead of the input. Every voice and
         // both engines read the ring exactly as before and never learn that

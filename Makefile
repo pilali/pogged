@@ -94,6 +94,17 @@ ifdef HYBRID
     override CXXFLAGS += -DPOGGED_HYB_HOLD_MS=$(HYB_HOLD).0f -DPOGGED_HYB_FLOOR=$(HYB_FLOOR)f
 endif
 
+# §31 experiment: FREEZE=v2 rebuilds Freeze+Gliss so the glissando actually
+# works. The current freeze captures from the shared ring, which only holds live
+# input when NOT frozen — so re-capturing a note means returning to heel, which
+# unfreezes and "resets everything" (the glide never lands). v2 captures from a
+# DEDICATED always-live buffer, so a SHORT heel touch re-captures the current
+# live note and glides to it while the octaves stay frozen; a longer heel hold
+# unfreezes. Off by default. `make TARGET=rpi5 HYBRID=1 FREEZE=v2`.
+ifeq ($(FREEZE),v2)
+    override CXXFLAGS += -DPOGGED_FREEZE_V2
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 
