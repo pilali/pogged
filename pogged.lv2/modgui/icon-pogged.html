@@ -88,13 +88,15 @@
             <span class="pogged-fader-label">DETUNE</span><button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_detune" title="Send the dry through the detune chorus and Spread. Costs the dry its zero latency.">DRY</button>
         </div>
 
-        <!-- FOCUS: a lamp under the voices it switches, as the pedal does.
-             The pedal's bracket spans only +1/+2 because its POG algorithm can
-             bend nothing else; ours switches EVERY voice, so it spans them all
-             — bracketing +1/+2 here would lie. -->
+        <!-- FOCUS: a 3-way engine selector under the voices it switches, as the
+             pedal does. The pedal's bracket spans only +1/+2 because its POG
+             algorithm can bend nothing else; ours switches EVERY voice, so it
+             spans them all — bracketing +1/+2 here would lie. -->
         <div class="pogged-bracket pogged-bracket-focus">
-            <button type="button" class="pogged-lamp" data-handle="focus"
-                    title="Engine: off = granular (~3 ms, the POG sound), on = phase vocoder (~85 ms, clean on chords)">FOCUS</button>
+            <div class="pogged-seg pogged-seg-focus" data-handle="focus"
+                 title="Engine: GRAN = granular (~15 ms, POG feel) · VOC = phase vocoder (~85 ms, clean on chords) · HYB = granular attack + vocoder body">
+                <div class="pogged-seg-btns"><button type="button" class="pogged-seg-btn" data-value="0">GRAN</button><button type="button" class="pogged-seg-btn" data-value="1">VOC</button><button type="button" class="pogged-seg-btn" data-value="2">HYB</button></div>
+            </div>
         </div>
         <div class="pogged-bracket pogged-bracket-dry"><span>DRY</span></div>
     </div>

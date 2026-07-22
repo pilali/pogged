@@ -337,15 +337,16 @@
    fails the tool instead of silently sliding the bracket off its buttons. */
 .pogged-panel{{{cns}}} .pogged-bracket-focus { left: 106px; right: 218px; }
 .pogged-panel{{{cns}}} .pogged-bracket-dry   { left: 413px; right: 39px;  }
-.pogged-panel{{{cns}}} .pogged-bracket-focus .pogged-lamp {
-    border-radius: 3px;
-    bottom: -10px;
-    font-size: 8px;
+/* FOCUS 3-way selector sits centred just below its bracket, where the old lamp
+   was. Absolutely positioned so it hangs off the bracket without disturbing the
+   voice columns above it. */
+.pogged-panel{{{cns}}} .pogged-bracket-focus .pogged-seg-focus {
+    bottom: -13px;
     left: 50%;
-    padding: 2px 8px;
     position: absolute;
     transform: translateX(-50%);
 }
+.pogged-panel{{{cns}}} .pogged-seg-focus .pogged-seg-btn { font-size: 8px; padding: 2px 7px; }
 
 /* ── Setup strip ────────────────────────────────────────── */
 /* What the POG3 keeps in its OLED menu. Visually set apart from the

@@ -326,7 +326,7 @@ void SegControl::setIndex(int i)
 void SegControl::resized()
 {
     auto r = getLocalBounds();
-    r.removeFromTop(12);                       // caption row
+    if (caption.isNotEmpty()) r.removeFromTop(12);   // caption row (skip if none)
     const int n = juce::jmax(1, buttons.size());
     // Integer-divide the strip and give the remainder away one pixel at a time,
     // so the segments tile exactly with no seam or overhang at the right edge.
@@ -346,24 +346,6 @@ void SegControl::paint(juce::Graphics& g)
     g.drawText(caption.toUpperCase(), getLocalBounds().removeFromTop(11),
                juce::Justification::centredLeft);
 }
-
-// ── FocusLamp ────────────────────────────────────────────────────────────────
-FocusLamp::FocusLamp(juce::AudioProcessorValueTreeState& s, const juce::String& id)
-{
-    auto* prm = s.getParameter(id);
-    jassert(prm != nullptr);
-    auto* b = new PanelButton("FOCUS", true, true);
-    button.reset(b);
-    addAndMakeVisible(*button);
-    if (prm) {
-        attachment = std::make_unique<juce::ParameterAttachment>(
-            *prm, [this, b](float v) { on = v > 0.5f; b->on = on; b->repaint(); });
-        b->onClick = [this] { attachment->setValueAsCompleteGesture(on ? 0.0f : 1.0f); };
-        attachment->sendInitialUpdate();
-    }
-}
-
-void FocusLamp::resized() { button->setBounds(getLocalBounds()); }
 
 // ── PoggedEditor ─────────────────────────────────────────────────────────────
 namespace {
@@ -417,7 +399,10 @@ PoggedEditor::PoggedEditor(PoggedAudioProcessor& p)
         addAndMakeVisible(f);
     }
 
-    focus = std::make_unique<FocusLamp>(proc.apvts, "focus");
+    // FOCUS: 3-way engine selector, no caption (its place under the voices and
+    // the bracket already say what it is), mirroring the modgui's inline seg.
+    focus = std::make_unique<SegControl>(proc.apvts, "focus", "",
+                                         juce::StringArray { "GRAN", "VOC", "HYB" });
     addAndMakeVisible(*focus);
 
     // SETUP: what the POG3 keeps in its OLED menu. We have no OLED, and burying
@@ -540,8 +525,9 @@ void PoggedEditor::resized()
     dryBracket = juce::Rectangle<int>(
         band(kFxFirst).getStart(), brTop,
         band((int) cols.size() - 1).getEnd() - band(kFxFirst).getStart(), brH);
-    // The lamp rides ON the bracket, covering its middle, as on the panel.
-    focus->setBounds(focusBracket.getCentreX() - 26, brTop - 4, 52, 15);
+    // The 3-way selector rides ON the bracket, covering its middle, as on the
+    // panel. Wider than the old lamp to fit GRAN/VOC/HYB.
+    focus->setBounds(focusBracket.getCentreX() - 57, brTop - 5, 114, 16);
 
     // SETUP strip.
     const int sy = getHeight() - 50;
