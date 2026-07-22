@@ -1187,8 +1187,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             const float hpx = p->burst_hp.process(x);
             if (onset) p->burst_env = 1.0f;
             else       p->burst_env *= burst_c;
-            const float wet_sum = std::min(1.0f, p->g_sub1 + p->g_sub2 +
-                                           p->g_up5 + p->g_up1 + p->g_up2);
+            // §18 burst is a 1800 Hz+ pick snap — it tightens the PITCHED (up)
+            // voices' attack, but on the smooth low-passed subs it lands as an
+            // out-of-place tick ("pic de saturation"), and the subs get their
+            // attack from the granular engine anyway. So scale it by the UP
+            // voices only, not the subs.
+            const float wet_sum = std::min(1.0f, p->g_up5 + p->g_up1 + p->g_up2);
             const float tgt = (env_on ? 0.0f : 1.0f) *
                               std::max(0.0f, 1.0f - p->g_dry) * wet_sum;
             p->g_burst += gc * (tgt - p->g_burst);
