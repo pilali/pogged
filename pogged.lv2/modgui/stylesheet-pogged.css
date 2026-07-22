@@ -336,13 +336,15 @@
    now checks both brackets against the columns they group, so a column change
    fails the tool instead of silently sliding the bracket off its buttons. */
 .pogged-panel{{{cns}}} .pogged-bracket-focus { left: 106px; right: 218px; }
-/* FOCUS 3-way selector rides ON the bracket line, vertically centred on it (as
-   the old lamp did), rather than hanging below. */
+/* FOCUS 3-way selector rides ON the bracket's HORIZONTAL LINE — its centre sits
+   on the bottom border (the wide line), not on the middle of the 7 px box whose
+   height includes the side ticks. bottom:0 puts its lower edge on the line, then
+   translateY(50%) drops it half its height so the line runs through its centre. */
 .pogged-panel{{{cns}}} .pogged-bracket-focus .pogged-seg-focus {
+    bottom: 0;
     left: 50%;
     position: absolute;
-    top: 50%;
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, 50%);
 }
 .pogged-panel{{{cns}}} .pogged-seg-focus .pogged-seg-btn { font-size: 8px; padding: 2px 7px; }
 
