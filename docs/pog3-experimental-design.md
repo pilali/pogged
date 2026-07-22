@@ -1654,3 +1654,29 @@ onset colle **au vocodeur pur** (85/84/63/60 ms sur les accords), PAS à l'hybri
 vocodeur)** — l'hybride, derrière le flag, n'y était pas. D'où le knob Makefile
 `HYBRID=1` pour tester le vrai hybride sur matériel. Latence attendue de
 l'hybride : attaques ~12-25 ms (le −1 plafonne ~15-22 ms, physique).
+
+## §31 — Freeze + Gliss : le glissando qui ne marchait pas
+
+### Le bug (trouvé par l'utilisateur, sur contrôle MIDI)
+
+Le freeze capturait sa note depuis la **ring partagée**. Or, gelé, la ring
+contient la BOUCLE, pas le live. Pour capturer une nouvelle note il fallait donc
+repasser par le talon — ce qui dégèle et fait basculer les octaves en live
+(« ça réinitialise tout »), si bien que le glide n'aboutissait jamais. Vérifié :
+en V1, un bref coup de talon laissait les octaves bloquées sur A.
+
+### Le correctif
+
+Un **tampon d'entrée dédié** enregistre toujours le live (gelé ou non), et
+`FreezeLoop::capture` lit dedans au lieu de la ring partagée. Geste :
+- **coup de talon COURT (< 150 ms)** → recapture la note live courante et
+  **glisse** dessus, les octaves restant gelées (elles ne repassent jamais en
+  live) ;
+- **talon MAINTENU (> 150 ms)** → dégèle (retour au live).
+La position au moment de la recapture fixe la vitesse (20 ms → 2 s). Le morphing
+lui-même (crossfade entre l'ancienne et la nouvelle boucle) était déjà correct —
+seul le mécanisme de capture l'empêchait d'aboutir.
+
+Vérifié en simulation : coup de talon → octaves glissent A/2 → B/2 (110 → 165 Hz)
+sur ~1,5 s sans repasser en live. `freeze_test` vert. Validé à l'oreille par
+l'utilisateur, puis **passé en défaut** (le chemin V1 est retiré).
