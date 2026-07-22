@@ -162,8 +162,14 @@ private:
     // few tens of times per second, noise next to the per-sample work.
     double _aligned(const float* ring, uint32_t mask,
                     double anchor, double ref_pos) const noexcept {
-        constexpr int K = 24;
-        float ref[K];
+        // §30: the correlation window must span a good fraction of the OUTPUT
+        // period to align a low tone — a fixed 24-sample (0.5 ms) window is
+        // near-DC for the ÷2 voice (41 Hz = 24 ms period), so the aligner did
+        // almost nothing on the sub and left its warble. _grain is sized from
+        // the output period (GRAIN_PERIODS·period), so half a grain is ~0.7
+        // period of correlation — enough to phase-lock the low tone.
+        const int K = std::clamp(_grain / 2, 24, MAXK);
+        float ref[MAXK];
         {
             double p = ref_pos;
             for (int i = 0; i < K; ++i) {
@@ -187,6 +193,7 @@ private:
         }
         return anchor - (double)best_d;
     }
+    static constexpr int MAXK = 1024;
 
     Tap   _t[N_TAPS];
     float _ratio     = 1.0f;   // read speed; may be modulated per block
