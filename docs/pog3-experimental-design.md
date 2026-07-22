@@ -1633,6 +1633,18 @@ Mesuré sur la prise réelle, blocs de 64 : **mean 73 → 38 µs/bloc**, pire-bl
 sont dans le knob `HYBRID=1` (et le sub long_only gaté par `POGGED_DYN_FOCUS`,
 désactivable via `POGGED_SUB_SPLIT` pour l'A/B).
 
+### Focus devient un sélecteur à 3 voies
+
+Sous l'hybride, le paramètre Focus (avant : 0 granulaire / 1 vocodeur, statique)
+ne pilotait plus rien — g_focus était piloté par l'onset. Confusion utilisateur :
+« je n'entends aucune différence en activant/désactivant Focus ». Corrigé : Focus
+est maintenant un **sélecteur de moteur à 3 valeurs** — 0 Granulaire, 1 Vocodeur,
+2 **Hybride** (défaut). Les modes 0/1 gardent leur sens (compat presets) et
+utilisent le crossfade lent ; le mode 2 est le pilotage par onset. TTL étendu
+(max 2, scalePoint « Hybrid (POG) »). Dans un build non-hybride, la valeur 2
+retombe sur Vocodeur. Vérifié : lag global 15 / 85 / 82 ms pour 0 / 1 / 2 (le
+mode 2 diffère du 1 par l'attaque tight, visible par onset, pas en global).
+
 ### Mesure sur prise matérielle réelle (dry vs wet alignés)
 
 L'utilisateur a fourni deux pistes alignées de la même prise (dry seul / wet =

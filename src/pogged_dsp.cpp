@@ -689,15 +689,18 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float dryfilt_t = (p_->dry_filter > 0.5f) ? 1.0f : 0.0f;
     const float drydet_t  = (p_->dry_detune > 0.5f) ? 1.0f : 0.0f;
 
+    // Engine crossfade time constant. Manual mode changes (turning Focus) use
+    // this slow ramp; the hybrid's per-onset dynamics use the fast ones below.
+    const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
 #ifdef POGGED_DYN_FOCUS
-    // §30: the static-Focus crossfade (focus_t/focus_c) is replaced by the
-    // onset-driven hold/rise/fall below, so it is not computed here.
+    // §30: Focus becomes a 3-way engine SELECTOR (0 granular, 1 vocoder, 2
+    // hybrid). The static crossfade still drives modes 0/1; mode 2 is the
+    // onset-driven hold/rise/fall (granular attack, vocoder body).
     const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
     const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
     const float hyb_fall_c = 1.0f - std::exp(-1.0f / (HYB_FALL_MS * 0.001f * sr));
 #else
     const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
-    const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
 #endif
 
     const float range_t = std::clamp(p_->range_mode, 0.0f, 2.0f);
@@ -965,14 +968,23 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // is one engine. The vocoder's OLA needs ~N samples to fill, which the
         // 150 ms fade covers — it ramps in from silence rather than clicking.
 #ifdef POGGED_DYN_FOCUS
-        // §30: dynamic Focus — drive g_focus from the onset detector instead of
-        // the static Focus param. Hold granular (0) for HYB_HOLD after each
-        // onset (covering the vocoder's latency), then switch to vocoder (1)
-        // over the short HYB_RISE; fall back fast-but-smooth on the next onset.
-        if (onset) p->hyb_hold = hyb_hold_n;
-        const float hyb_target = (p->hyb_hold > 0) ? 0.0f : 1.0f;
-        if (p->hyb_hold > 0) --p->hyb_hold;
-        const float hyb_coef = (hyb_target < p->g_focus) ? hyb_fall_c : hyb_rise_c;
+        // §30: Focus is a 3-way selector — 0 granular, 1 vocoder, 2 hybrid.
+        //   modes 0/1: fixed target, slow manual crossfade (focus_c);
+        //   mode 2 (hybrid): hold granular (0) for HYB_HOLD after each onset
+        //   (covering the vocoder's latency), then switch to vocoder (1) over
+        //   the short HYB_RISE; fall back fast-but-smooth on the next onset.
+        const float fsel = std::clamp(p_->focus, 0.0f, 2.0f);
+        float hyb_target, hyb_coef;
+        if (fsel < 0.5f) {                     // 0 = granular only
+            hyb_target = 0.0f; hyb_coef = focus_c;
+        } else if (fsel < 1.5f) {              // 1 = vocoder only
+            hyb_target = 1.0f; hyb_coef = focus_c;
+        } else {                               // 2 = hybrid (onset-driven)
+            if (onset) p->hyb_hold = hyb_hold_n;
+            hyb_target = (p->hyb_hold > 0) ? 0.0f : 1.0f;
+            if (p->hyb_hold > 0) --p->hyb_hold;
+            hyb_coef = (hyb_target < p->g_focus) ? hyb_fall_c : hyb_rise_c;
+        }
         p->g_focus += hyb_coef * (hyb_target - p->g_focus);
 #else
         p->g_focus += focus_c * (focus_t - p->g_focus);
