@@ -384,7 +384,7 @@ namespace {
     }
     // Group breaks: before the voices, and before the effects.
     const int kBreaks[] = { 1, 7 };
-    constexpr int kVoiceFirst = 1, kVoiceLast = 6, kFxFirst = 7;
+    constexpr int kVoiceFirst = 1, kVoiceLast = 6;
 }
 
 PoggedEditor::PoggedEditor(PoggedAudioProcessor& p)
@@ -457,17 +457,15 @@ void PoggedEditor::paint(juce::Graphics& g)
         g.drawVerticalLine(b.getX() - 10, (float) (b.getY() + 34), (float) (b.getBottom() - 40));
     }
 
-    // The FOCUS and DRY brackets, hung off the columns they group.
+    // The FOCUS bracket, hung off the voice columns it groups. (The DRY bracket
+    // around the three DRY lamps was removed — it was superfluous.)
     g.setColour(pogged::kInk.withAlpha(0.35f));
-    for (auto* br : { &focusBracket, &dryBracket }) {
+    {
+        const auto* br = &focusBracket;
         g.drawVerticalLine(br->getX(), (float) br->getY(), (float) br->getBottom());
         g.drawVerticalLine(br->getRight(), (float) br->getY(), (float) br->getBottom());
         g.drawHorizontalLine(br->getBottom(), (float) br->getX(), (float) br->getRight());
     }
-    g.setColour(pogged::kMuted);
-    g.setFont(pogged::font(8.0f));
-    g.drawText("DRY", dryBracket.withY(dryBracket.getBottom() + 1).withHeight(12),
-               juce::Justification::centred);
 
     // SETUP strip: set apart from the performance controls above it.
     g.setColour(pogged::kInk.withAlpha(0.18f));
@@ -522,12 +520,9 @@ void PoggedEditor::resized()
     focusBracket = juce::Rectangle<int>(
         band(kVoiceFirst).getStart(), brTop,
         band(kVoiceLast).getEnd() - band(kVoiceFirst).getStart(), brH);
-    dryBracket = juce::Rectangle<int>(
-        band(kFxFirst).getStart(), brTop,
-        band((int) cols.size() - 1).getEnd() - band(kFxFirst).getStart(), brH);
-    // The 3-way selector rides ON the bracket, covering its middle, as on the
-    // panel. Wider than the old lamp to fit GRAN/VOC/HYB.
-    focus->setBounds(focusBracket.getCentreX() - 57, brTop - 5, 114, 16);
+    // The 3-way selector rides ON the bracket, vertically centred on its line
+    // (as the panel does). Wider than the old lamp to fit GRAN/VOC/HYB.
+    focus->setBounds(focusBracket.getCentreX() - 57, focusBracket.getBottom() - 8, 114, 16);
 
     // SETUP strip.
     const int sy = getHeight() - 50;

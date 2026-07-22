@@ -165,6 +165,6 @@ private:
     std::unique_ptr<SegControl>    focus;    // FOCUS: GRAN / VOC / HYB
     juce::ComboBox presetBox;
     juce::Label brand, subtitle;
-    juce::Rectangle<int> focusBracket, dryBracket;
+    juce::Rectangle<int> focusBracket;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedEditor)
 };
