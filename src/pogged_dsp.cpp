@@ -317,6 +317,10 @@ static constexpr float FOCUS_XFADE_MS = 150.0f;
 static constexpr float HYB_HOLD_MS = POGGED_HYB_HOLD_MS;
 static constexpr float HYB_FLOOR   = POGGED_HYB_FLOOR;
 static constexpr float HYB_RISE_MS = 12.0f;
+// Fixed sensitivity of the hybrid's own onset detector — high enough to catch
+// a re-pluck over a ringing note (8/8 on eighth-note repeats) but not so high
+// it fires on a held note (measured knee: 0.88).
+static constexpr float HYB_ONSET_SENS = 0.88f;
 static constexpr float HYB_FALL_MS = 8.0f;
 
 // ── Transient reinjection (§18) ──────────────────────────────────────────────
@@ -375,6 +379,15 @@ struct PoggedDsp {
     Biquad        vfilt[N_VOICES];   // fixed per-voice tone shaping (voicing)
     Envelope      env;
     OnsetDetector det;
+#ifdef POGGED_DYN_FOCUS
+    // §30: the hybrid's engine switch needs its OWN onset detector, at a fixed
+    // high sensitivity — the swell's detector (keyed to attack_sens) has too
+    // high a threshold to catch a RE-PLUCK over a still-ringing note (measured:
+    // it fired once on 8 eighth-note re-plucks), so only the first attack got
+    // the granular snap and every note after felt like the vocoder. This one
+    // fires on each re-pluck (8/8) without spuriously triggering on a held note.
+    OnsetDetector hyb_det;
+#endif
     // Filter sweep: its own envelope and its own onset detector, because the
     // POG3 gives the sweep a Trigger Sensitivity separate from the ATTACK
     // slider's — the two effects can key off different playing dynamics.
@@ -592,6 +605,9 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
 
     p->frz.init(sample_rate);
     p->det.init(sr);
+#ifdef POGGED_DYN_FOCUS
+    p->hyb_det.init(sr);
+#endif
     p->filt_det.init(sr);
     p->burst_hp.setup(Biquad::HP, std::min(BURST_HP_HZ, ny), 0.707f, sr);
     pogged_dsp_reset(p);
@@ -627,6 +643,9 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->filter_r.reset();
     p->env.reset();
     p->det.reset();
+#ifdef POGGED_DYN_FOCUS
+    p->hyb_det.reset();
+#endif
     p->filt_env.reset();
     p->filt_det.reset();
     p->filt_env_level = 0.0f;
@@ -947,6 +966,10 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // vocoder swells per bin on its own (see set_swell above), so a
         // global multiply on the mixed wet bus would double-swell it.
         const bool onset = p->det.process(x, sens);
+#ifdef POGGED_DYN_FOCUS
+        // §30: the hybrid's dedicated onset (fires on every re-pluck).
+        const bool hyb_onset = p->hyb_det.process(x, HYB_ONSET_SENS);
+#endif
         if (env_on) {
             if (onset) {
                 if (p->env.is_active() && p->env_level > 0.1f) {
@@ -998,7 +1021,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             // onset's own broadband transient masks the step on notes still
             // ringing. Then hold granular through the vocoder's latency and
             // rise to the vocoder body over the short HYB_RISE.
-            if (onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f; }
+            if (hyb_onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f; }
             hyb_target = (p->hyb_hold > 0) ? 0.0f : (1.0f - HYB_FLOOR);
             if (p->hyb_hold > 0) --p->hyb_hold;
             hyb_coef = hyb_rise_c;
