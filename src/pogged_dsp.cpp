@@ -302,7 +302,20 @@ static constexpr float FOCUS_XFADE_MS = 150.0f;
 //     step, which would click the notes still ringing).
 // Equal-power (sqrt) crossfade, so the decorrelated pair does not dip -3 dB
 // mid-fade. Values chosen by ear on the user's own take (D1: 100/12/8 ms).
-static constexpr float HYB_HOLD_MS = 100.0f;
+//
+// HYB_FLOOR keeps a granular COMPONENT under the vocoder body during sustain
+// (g_focus tops out at 1-FLOOR instead of 1, so g_gran = sqrt(FLOOR) stays):
+// the body was pure vocoder and therefore FELT like the vocoder — the granular
+// floor gives it back some of the granular's immediacy/presence at the cost of
+// a little warble. 0 = the original pure-vocoder body. Tunable by ear.
+#ifndef POGGED_HYB_HOLD_MS
+#define POGGED_HYB_HOLD_MS 100.0f
+#endif
+#ifndef POGGED_HYB_FLOOR
+#define POGGED_HYB_FLOOR 0.0f
+#endif
+static constexpr float HYB_HOLD_MS = POGGED_HYB_HOLD_MS;
+static constexpr float HYB_FLOOR   = POGGED_HYB_FLOOR;
 static constexpr float HYB_RISE_MS = 12.0f;
 static constexpr float HYB_FALL_MS = 8.0f;
 
@@ -986,7 +999,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             // ringing. Then hold granular through the vocoder's latency and
             // rise to the vocoder body over the short HYB_RISE.
             if (onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f; }
-            hyb_target = (p->hyb_hold > 0) ? 0.0f : 1.0f;
+            hyb_target = (p->hyb_hold > 0) ? 0.0f : (1.0f - HYB_FLOOR);
             if (p->hyb_hold > 0) --p->hyb_hold;
             hyb_coef = hyb_rise_c;
         }

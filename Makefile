@@ -84,6 +84,14 @@ ifdef HYBRID
     # vocoder. Override with e.g. `HYBRID=1 PV_OS=8` to keep OS=8 on the ups.
     PV_OS ?= 4
     override CXXFLAGS += -DPOGGED_PV_OS=$(PV_OS)
+    # §30 feel: HYB_HOLD = ms of granular after each onset before handing to the
+    # vocoder body; HYB_FLOOR = granular kept UNDER the vocoder body during
+    # sustain (0 = pure-vocoder body; higher = more of the granular's immediacy,
+    # a little more warble). g_gran during sustain = sqrt(FLOOR). Tune by ear:
+    # `make HYBRID=1 HYB_HOLD=150 HYB_FLOOR=0.15`.
+    HYB_HOLD  ?= 100
+    HYB_FLOOR ?= 0.0
+    override CXXFLAGS += -DPOGGED_HYB_HOLD_MS=$(HYB_HOLD).0f -DPOGGED_HYB_FLOOR=$(HYB_FLOOR)f
 endif
 
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
