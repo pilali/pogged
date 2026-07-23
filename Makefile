@@ -127,8 +127,9 @@ override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)f
 # ATTACK felt inoperative in hybrid. HYB_SWELL=1 keys the swell to the same
 # onset that drives the granular takeover, so it swells on every pluck like the
 # vocoder's per-bin swell. Reads hyb_det only — the §30 hybrid fix is untouched.
-# Off by default (hybrid unchanged from 1f1f52b). `make ... HYBRID=1 HYB_SWELL=1`.
-ifdef HYB_SWELL
+# ON by default (validated); disable with `HYB_SWELL=0`. No effect without HYBRID.
+HYB_SWELL ?= 1
+ifneq ($(HYB_SWELL),0)
     override CXXFLAGS += -DPOGGED_HYB_SWELL
 endif
 
@@ -148,8 +149,10 @@ endif
 # repeats at the loop rate — "sounds like a loop") and hold their spectrum
 # smoothly instead. The gesture is unchanged: freeze on pedal-off-heel, glide on
 # heel-tap (re-captures the new note), unfreeze on heel-hold; the dry stays live.
-# Granular Focus keeps the loop. Off by default (freeze byte-identical). A/B knob.
-ifdef FREEZE_SMOOTH
+# Granular Focus keeps the loop. ON by default (validated); disable with
+# `FREEZE_SMOOTH=0` to restore the byte-identical loop freeze. No effect without HYBRID.
+FREEZE_SMOOTH ?= 1
+ifneq ($(FREEZE_SMOOTH),0)
     override CXXFLAGS += -DPOGGED_FREEZE_SMOOTH
 endif
 
