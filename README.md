@@ -127,6 +127,59 @@ cmake --build juce/build --config Release --parallel
 
 macOS builds are universal (arm64 + x86_64) by default.
 
+---
+
+## Build options
+
+The `make` build (LV2 desktop and the MOD / Raspberry Pi cross-builds) takes a
+`TARGET` and a set of optional tuning flags. The shipped plugin uses the
+defaults; the flags let you rebuild the DSP with different latency / quality /
+feel trade-offs. They do **not** apply to the JUCE (VST3 / AU) build.
+
+Make tracks the flag signature, so changing a flag forces a rebuild even when no
+source file changed.
+
+### Targets
+
+| `TARGET=` | Hardware | Notes |
+|---|---|---|
+| `native` *(default)* | This machine | Desktop LV2, full engine choice. |
+| `rpi5` | Raspberry Pi 5 / pistomp | Cross-compiles `aarch64` (Cortex-A76), static libstdc++/libgcc. |
+| `moddwarf-new` | MOD Dwarf (Cortex-A35) | Vocoder compiled out (`POGGED_NO_VOCODER`) — the A35 can't carry it; granular only. |
+| `modduox-new` | MOD Duo X (quad Cortex-A53) | Vocoder pinned to a single 2048 window (`POGGED_PV_N=2048`) for CPU. |
+
+### Hybrid Focus — `HYBRID=1`
+
+Enables the POG-class **dynamic Focus**: the granular engine renders the tight
+attack (~12–20 ms), the phase vocoder the clean sustained body, crossfaded per
+note by an onset detector — the low-latency answer to the vocoder's ~85 ms
+"doublon". Off by default. These sub-flags apply only together with `HYBRID=1`:
+
+| Flag | Default | Effect |
+|---|---|---|
+| `GRAIN_UP=<ms>` | `12` | Up-voice grain length. Shorter = tighter attack, more warble. |
+| `GRAIN_PER=<periods>` | `1.5` | Sub-voice grain length, in periods of the sub's *output*. **2.0–3.0** stabilises the low octave; below its ~2-period floor the splice warbles into mush. |
+| `PV_OS=<4\|8>` | `4` | Vocoder overlap factor on the up voices. 8 = denser frames, 2× the FFT cost. |
+| `HYB_HOLD=<ms>` | `100` | Granular hold after each onset before handing to the vocoder body (covers the vocoder's latency). |
+| `HYB_FLOOR=<0..1>` | `0.0` | Granular kept *under* the vocoder body during sustain (0 = pure vocoder body; higher = more granular immediacy, a little more warble). |
+
+### Standalone tuning flags
+
+Work with any target, and — where noted — alongside `HYBRID=1`:
+
+| Flag | Default | Effect |
+|---|---|---|
+| `GRAIN_UP_PER=<periods>` | `0` *(off)* | Size each **up** voice's grain to span this many periods of its lowest output at the current range, floored at `GRAIN_UP`. Fixes the +1 / fifth warble ("bouillie") on low and baritone notes; `0` keeps the old fixed grain. |
+| `HYB_SWELL=1` | off | Makes the **ATTACK** swell operative in hybrid: keys the swell to the granular engine's own onset, so it swells on every pluck like the vocoder's per-bin swell. Reads the hybrid detector only — the hybrid switch itself is untouched. |
+| `ANCHOR=<gain>` | `0` *(off)* | Mixes a resynthesised octave-lock anchor under the sub voices to steady the low octave when the input fundamental is weak. Of little benefit for attack-style playing. |
+| `XBAND=<1\|hz>` | off | Raises the vocoder crossover so the long 4096 window carries more low-mid and resolves the "dissonant wanderer" harmonic-pair midpoints. `XBAND=1` = 600 Hz; a higher value (e.g. `XBAND=900`) is cleaner but pays the 85 ms window over more of the band. |
+
+**A full tuned hybrid build** for the Pi 5 (current reference settings):
+
+```sh
+make TARGET=rpi5 HYBRID=1 GRAIN_UP=10 GRAIN_PER=2.5 GRAIN_UP_PER=2.2 HYB_SWELL=1
+```
+
 ## License
 
 GPL-3.0-or-later.
