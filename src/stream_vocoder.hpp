@@ -323,8 +323,22 @@ private:
         // (1.0 = a constant drone).
         if (!_hold) {
             _analyse(ring, mask, wpos);
-        } else if (_hold_decay < 1.0f) {
-            for (int k = 0; k < BINS; ++k) { _ana_cx[k] *= _hold_decay; _ana_mag[k] *= _hold_decay; }
+        } else {
+            // §36: do NOT just repeat the frozen frame — repeating one frame's
+            // fixed phase spectrum makes the OLA replay the same slice of
+            // waveform, i.e. a loop at the frame rate ("boucle très courte", the
+            // sound confused). Instead CONTINUE the sustain: advance every bin's
+            // phase by its own instantaneous frequency, exactly as the live
+            // analysis would have, so each partial keeps evolving independently
+            // and the held tone is steady, not looped. Neighbouring bins of a
+            // lobe share that frequency, so the lobe shape (which the peak
+            // translation below needs) survives the rotation. _hold_decay folds
+            // in the release.
+            for (int k = 0; k < BINS; ++k) {
+                const float a = 2.0f * float(M_PI) * _ana_freq[k] * (float)HOP / _sr;
+                _ana_cx[k] *= std::complex<float>(std::cos(a), std::sin(a)) * _hold_decay;
+                _ana_mag[k] *= _hold_decay;
+            }
         }
 
         // ── Per-peak pitch shift (Laroche & Dolson 1999) ────────────────────
