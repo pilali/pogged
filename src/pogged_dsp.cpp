@@ -260,6 +260,27 @@ static constexpr float ALIGN_PERIODS = 0.5f;
 // grains for it would smear everything else for nothing.
 static constexpr float GRAIN_MAX_MS  = 160.0f;
 
+// The UP voices' fixed grain length (ms). Kept short for a tight, low-latency
+// attack (the granular's whole reason to exist beside the vocoder).
+#ifndef POGGED_GRAIN_UP_MS
+#define POGGED_GRAIN_UP_MS 25.0f
+#endif
+static constexpr float GRAIN_UP_MS_C = POGGED_GRAIN_UP_MS;
+
+// §34: the UP voices used a FIXED grain, sized once for every note. On a LOW
+// note the up-output is still low enough that a fixed short grain spans less
+// than a period — the +5th of a baritone low B sings at 92 Hz, and a 10 ms
+// grain is 0.9 of its 10.8 ms period — so the aligner has no full cycle to
+// lock onto and the splice warbles into "bouillie" (the user, on the +1 and
+// the fifth from F# down). When > 0, size each up voice's grain to span at
+// least this many periods of the LOWEST output it emits at the current range,
+// floored at GRAIN_UP_MS so high notes keep their tight attack. 0 = the old
+// fixed behaviour (1f1f52b).
+#ifndef POGGED_GRAIN_UP_PERIODS
+#define POGGED_GRAIN_UP_PERIODS 0.0f
+#endif
+static constexpr float GRAIN_UP_PERIODS = POGGED_GRAIN_UP_PERIODS;
+
 // ── FOCUS: which pitch engine ────────────────────────────────────────────────
 // The POG3 has a FOCUS button that swaps the transposition algorithm, and its
 // manual notes the POG algorithm "features lower latency" than the alternative.
@@ -482,6 +503,31 @@ static void setup_subs(PoggedDsp* p, float f_low, float sr) noexcept
     }
 }
 
+// §34: size the UP voices' grains from the range, mirroring setup_subs. With
+// GRAIN_UP_PERIODS == 0 every up voice keeps the fixed GRAIN_UP grain (old
+// behaviour); otherwise a voice whose lowest output at this range would underrun
+// GRAIN_UP_PERIODS periods gets a proportionally longer grain, so the aligner
+// always has a full cycle to lock onto. Floored at the fixed grain so the high
+// notes (short output period) stay tight and low-latency. Called from _new and
+// on every range change, like setup_subs.
+static void setup_ups(PoggedDsp* p, float f_low, float sr) noexcept
+{
+    const int   grain_up = (int)(0.001f * GRAIN_UP_MS_C * sr);
+    const int   align    = (int)(0.010f * sr);          // 10 ms correlation scan
+    const Voice v[5]     = { V_UP5, V_UP1, V_UP2, V_UP1D, V_UP2D };
+    const float rat[5]   = { FIFTH_RATIO, 2.0f, 4.0f, 2.0f, 4.0f };
+    for (int i = 0; i < 5; ++i) {
+        int grain = grain_up;
+        if (GRAIN_UP_PERIODS > 0.0f) {
+            const float period_ms = 1000.0f / (rat[i] * f_low);   // lowest output
+            const int g_per = (int)(0.001f * std::min(GRAIN_UP_PERIODS * period_ms,
+                                                      GRAIN_MAX_MS) * sr);
+            grain = std::max(grain_up, g_per);
+        }
+        p->sh[v[i]].setup(rat[i], grain, align);
+    }
+}
+
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 PoggedDsp* pogged_dsp_new(double sample_rate)
 {
@@ -495,10 +541,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->mask = len - 1;
 
     const float sr = (float)sample_rate;
-#ifndef POGGED_GRAIN_UP_MS
-#define POGGED_GRAIN_UP_MS 25.0f
-#endif
-    const int grain_up  = (int)(0.001f * POGGED_GRAIN_UP_MS * sr);  // POG shimmer/lag
+    const int grain_up  = (int)(0.001f * GRAIN_UP_MS_C * sr);  // POG shimmer/lag
     const int align     = (int)(0.010f * sr);   // 10 ms correlation scan
 
     // Aligned respawn everywhere: without it the source-position jump at
@@ -507,12 +550,9 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     // so alternate grains cancel the target pitch outright. Correlation
     // alignment (SOLA-style) keeps grains phase-coherent for any input.
     setup_subs(p, range_f_low(0.0f), sr);      // guitar until told otherwise
-    p->sh[V_UP5 ].setup(FIFTH_RATIO, grain_up, align);
-    p->sh[V_UP1 ].setup(2.0f,  grain_up,  align);
-    p->sh[V_UP2 ].setup(4.0f,  grain_up,  align);
-    p->sh[V_UP1D].setup(2.0f,  grain_up,  align);
-    p->sh[V_UP2D].setup(4.0f,  grain_up,  align);
-    // Detuned dry sits at unison; the LFO moves it around 1.0.
+    setup_ups (p, range_f_low(0.0f), sr);      // §34: up grains sized from range
+    // Detuned dry sits at unison (ratio 1 → no splice warble), so it keeps the
+    // plain fixed grain regardless of GRAIN_UP_PERIODS.
     p->sh[V_DRYD].setup(1.0f,  grain_up,  align);
 
     // Fixed per-voice tone shaping — voices the octaves toward the POG2's
@@ -761,6 +801,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float range_t = std::clamp(p_->range_mode, 0.0f, 2.0f);
     if (range_t != p->cached_range) {
         setup_subs(p, range_f_low(range_t), sr);
+        setup_ups (p, range_f_low(range_t), sr);   // §34: up grains follow range
         p->cached_range = range_t;
     }
 

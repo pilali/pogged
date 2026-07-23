@@ -106,6 +106,17 @@ ifdef ANCHOR
     override CXXFLAGS += -DPOGGED_ANCHOR_MIX=$(ANCHOR)f
 endif
 
+# §34 up-voice grain sizing. The UP voices use a FIXED grain (GRAIN_UP ms),
+# which on a LOW note spans less than a period of the up-output (the +5th of a
+# baritone low B sings at 92 Hz) so the granular splice warbles into "bouillie".
+# GRAIN_UP_PER > 0 sizes each up voice's grain to span that many periods of its
+# LOWEST output at the range, floored at GRAIN_UP so high notes stay tight.
+# 0 (unset) = the old fixed behaviour. Tune by ear, e.g.
+# `make TARGET=rpi5 HYBRID=1 GRAIN_UP=10 GRAIN_PER=2.5 GRAIN_UP_PER=2.2`.
+ifdef GRAIN_UP_PER
+    override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)f
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 
