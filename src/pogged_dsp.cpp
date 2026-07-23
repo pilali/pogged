@@ -794,6 +794,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // onset-driven hold/rise/fall (granular attack, vocoder body).
     const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
     const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
+    // §35: are we in the hybrid engine mode this block? Used to key the ATTACK
+    // swell to the granular's own onset (see the swell block below).
+    [[maybe_unused]] const bool hyb_mode = std::clamp(p_->focus, 0.0f, 2.0f) >= 1.5f;
 #else
     const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
 #endif
@@ -1051,8 +1054,20 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // §30: the hybrid's dedicated onset (fires on every re-pluck).
         const bool hyb_onset = p->hyb_det.process(x, HYB_ONSET_SENS);
 #endif
+        // §35: what re-triggers the ATTACK swell. Normally the swell's own
+        // detector (`det`, keyed to attack_sens). In hybrid the GRANULAR renders
+        // the attack and swells only via the global env — but `det` is far less
+        // sensitive than the hybrid's hyb_det (0.88), so the granular took over
+        // on every re-pluck while the swell did NOT re-trigger, and ATTACK felt
+        // dead in hybrid. Key the swell to the SAME onset that drives the
+        // granular takeover, so the granular swells on every pluck like the
+        // vocoder's per-bin swell. hyb_det is only READ — the §30 fix is intact.
+        bool swell_trig = onset;
+#if defined(POGGED_DYN_FOCUS) && defined(POGGED_HYB_SWELL)
+        if (hyb_mode && hyb_onset) swell_trig = true;
+#endif
         if (env_on) {
-            if (onset) {
+            if (swell_trig) {
                 if (p->env.is_active() && p->env_level > 0.1f) {
                     // Re-pick during a swell: duck fast, then restart the
                     // attack from low — every pick re-swells without a click.

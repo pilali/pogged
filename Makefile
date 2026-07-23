@@ -117,6 +117,18 @@ ifdef GRAIN_UP_PER
     override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)f
 endif
 
+# §35 ATTACK swell in HYBRID mode. In hybrid the granular renders the attack and
+# swells only via the global env, which was keyed to `det` (attack_sens) — far
+# less sensitive than the hybrid's own onset detector (hyb_det, 0.88). So the
+# granular took over on every re-pluck but the swell did not re-trigger, and
+# ATTACK felt inoperative in hybrid. HYB_SWELL=1 keys the swell to the same
+# onset that drives the granular takeover, so it swells on every pluck like the
+# vocoder's per-bin swell. Reads hyb_det only — the §30 hybrid fix is untouched.
+# Off by default (hybrid unchanged from 1f1f52b). `make ... HYBRID=1 HYB_SWELL=1`.
+ifdef HYB_SWELL
+    override CXXFLAGS += -DPOGGED_HYB_SWELL
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 
