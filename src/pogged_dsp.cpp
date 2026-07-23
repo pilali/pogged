@@ -419,6 +419,10 @@ struct PoggedDsp {
     int           hyb_hold = 0;             // §30: samples left holding granular
     bool          voc_frozen = false;       // §37: vocoder spectrum currently held
     int           sust_wait  = 0;           // §37: settle countdown before freezing
+#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
+    SubVocoder    pv_fund;                  // §37b: unity voice held with the sustain,
+    float         g_fund = 0.0f;            //       so the PLAYED octave sustains too
+#endif
 
     // Voices are panned before the mix, so the wet bus is stereo by the time
     // it reaches the filter — hence one filter per channel, same coefficients.
@@ -683,6 +687,17 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     }
 #endif
 
+#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
+    // §37b: the held unison. Renders the note at the PLAYED octave (ratio 1) so
+    // the sustain holds the fundamental too, not just the transposed voices. Long
+    // window only (its latency is free on a held note) and it only SOUNDS while
+    // frozen — during play the live dry carries the fundamental, so no doubling.
+    p->pv_fund.init(sample_rate, 0);
+    p->pv_fund.set_ratio(1.0f);
+    p->pv_fund.long_only(true);
+    p->pv_fund.set_hold_release(SUSTAIN_REL_MS);
+#endif
+
     p->frz.init(sample_rate);
     {
         const uint32_t fl = std::clamp(next_pow2((uint32_t)(0.5 * sample_rate)),
@@ -728,6 +743,10 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->hyb_hold = 0;
     p->voc_frozen = false;              // §37: pv/pv_sub reset() cleared their hold
     p->sust_wait  = 0;
+#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
+    p->pv_fund.reset();
+    p->g_fund = 0.0f;
+#endif
     p->filter_l.reset();
     p->filter_r.reset();
     p->env.reset();
@@ -1029,6 +1048,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(false);
             else                              p->pv[vv].hold(false);
         }
+        p->pv_fund.hold(false);
         p->voc_frozen = false;
     }
 #endif
@@ -1186,6 +1206,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
                     if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(want_frozen);
                     else                              p->pv[vv].hold(want_frozen);
                 }
+                p->pv_fund.hold(want_frozen);   // §37b: the held unison
                 p->voc_frozen = want_frozen;
             }
 #endif
@@ -1306,6 +1327,20 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             o *= p->g_up2;
             spread_mix(V_UP2, o, p->p_up2);
         }
+
+#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
+        // §37b: the held unison, so the PLAYED octave sustains with the rest.
+        // Advanced every sample (it must stay warm to freeze cleanly) but it only
+        // SOUNDS while frozen, its gain ramping to the DRY level — during play the
+        // live dry carries the fundamental, so nothing doubles.
+        {
+            const float fund = p->pv_fund.process(ring, mask, p->wpos);
+            const float ftgt = p->voc_frozen ? dry_t : 0.0f;
+            p->g_fund += gc * (ftgt - p->g_fund);
+            wet_l += p->g_fund * fund;
+            wet_r += p->g_fund * fund;
+        }
+#endif
 
         // ── Transient reinjection (§18) ───────────────────────────────────
         // The HP always runs so it is warm when a burst fires. The gate
