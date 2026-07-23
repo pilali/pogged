@@ -118,6 +118,7 @@ public:
     }
 
     void reset() noexcept {
+        _hold = false;                 // §36: a reset is a fresh, un-held state
         std::memset(_ana_phase, 0, sizeof _ana_phase);
         _ph_idx = 0;
         std::memset(_ana_mag,   0, sizeof _ana_mag);

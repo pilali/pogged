@@ -344,6 +344,17 @@ static constexpr float HYB_RISE_MS = 12.0f;
 static constexpr float HYB_ONSET_SENS = 0.88f;
 static constexpr float HYB_FALL_MS = 8.0f;
 
+// §37 infinite sustain (build -DPOGGED_SUSTAIN). Once the granular attack window
+// (HYB_HOLD) has passed and the vocoder body takes over, freeze the vocoder
+// spectrum (§36 hold) so the note is held until the next attack, which unfreezes
+// it to capture the new note during the granular window. SUSTAIN_REL_MS is how
+// slowly the held note bleeds away (a natural release; large = an endless
+// drone). Only meaningful with POGGED_DYN_FOCUS (the hybrid).
+#ifndef POGGED_SUSTAIN_REL_MS
+#define POGGED_SUSTAIN_REL_MS 3000.0f
+#endif
+static constexpr float SUSTAIN_REL_MS = POGGED_SUSTAIN_REL_MS;
+
 // ── Transient reinjection (§18) ──────────────────────────────────────────────
 // The wet's FELT latency is its attack's: the pitched body cannot arrive
 // earlier (Gabor — §16/§17), but the pick's broadband snap can. On each onset
@@ -398,6 +409,7 @@ struct PoggedDsp {
 #endif
     float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
     int           hyb_hold = 0;             // §30: samples left holding granular
+    bool          voc_frozen = false;       // §37: vocoder spectrum currently held
 
     // Voices are panned before the mix, so the wet bus is stereo by the time
     // it reaches the filter — hence one filter per channel, same coefficients.
@@ -594,6 +606,9 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         if (v == V_SUB1 || v == V_SUB2) {
             p->pv_sub[v].init(sample_rate, v * (SubVocoder::HOP / N_VOICES));
             p->pv_sub[v].set_ratio(VOICE_RATIO[v]);
+#ifdef POGGED_SUSTAIN
+            p->pv_sub[v].set_hold_release(SUSTAIN_REL_MS);   // §37
+#endif
 #ifndef POGGED_PV_N
             p->pv_sub[v].prony(false, false);   // bare, like 351591f — no §22
 #if defined(POGGED_DYN_FOCUS) && !defined(POGGED_SUB_SPLIT)
@@ -614,6 +629,9 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         }
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
+#ifdef POGGED_SUSTAIN
+        p->pv[v].set_hold_release(SUSTAIN_REL_MS);           // §37
+#endif
 #ifndef POGGED_PV_N
         // §29: the UP-shift voices render from the LONG window only. The §20
         // trade (fixed low crossover, short window rendering input partials it
@@ -699,6 +717,7 @@ void pogged_dsp_reset(PoggedDsp* p)
     }
     p->g_focus = 0.0f;
     p->hyb_hold = 0;
+    p->voc_frozen = false;              // §37: pv/pv_sub reset() cleared their hold
     p->filter_l.reset();
     p->filter_r.reset();
     p->env.reset();
@@ -987,6 +1006,20 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     float*   ring = p->ring.data();
     const uint32_t mask = p->mask;
 
+#if defined(POGGED_SUSTAIN) && defined(POGGED_DYN_FOCUS)
+    // §37: if Focus is not on hybrid but a freeze is still latched (the user
+    // turned Focus away while a note was held), release every voice so the
+    // vocoder resumes the live signal. One check per block.
+    if (!hyb_mode && p->voc_frozen) {
+        for (int vv = 0; vv < N_VOICES; ++vv) {
+            if (vv == V_DRYD) continue;
+            if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(false);
+            else                              p->pv[vv].hold(false);
+        }
+        p->voc_frozen = false;
+    }
+#endif
+
     for (uint32_t i = 0; i < n_samples; ++i) {
         // INPUT GAIN is "the level of the signal seen at the input", so it is
         // applied before everything — the ring the voices read, the dry, and
@@ -1121,6 +1154,23 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             hyb_target = (p->hyb_hold > 0) ? 0.0f : (1.0f - HYB_FLOOR);
             if (p->hyb_hold > 0) --p->hyb_hold;
             hyb_coef = hyb_rise_c;
+#ifdef POGGED_SUSTAIN
+            // §37: once the granular attack window is spent (hyb_hold == 0) and
+            // the vocoder body takes over, FREEZE its spectrum so the note is
+            // held (with SUSTAIN_REL_MS release) until the next onset unfreezes it
+            // to capture the new note during the granular window. Edge-triggered:
+            // hold() is a bool set, applied to each wet vocoder voice only on the
+            // transition (~twice a note), never per sample.
+            const bool want_frozen = (p->hyb_hold == 0);
+            if (want_frozen != p->voc_frozen) {
+                for (int vv = 0; vv < N_VOICES; ++vv) {
+                    if (vv == V_DRYD) continue;
+                    if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(want_frozen);
+                    else                              p->pv[vv].hold(want_frozen);
+                }
+                p->voc_frozen = want_frozen;
+            }
+#endif
         }
         p->g_focus += hyb_coef * (hyb_target - p->g_focus);
 #else

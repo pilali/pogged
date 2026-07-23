@@ -129,6 +129,18 @@ ifdef HYB_SWELL
     override CXXFLAGS += -DPOGGED_HYB_SWELL
 endif
 
+# §37 infinite sustain (needs HYBRID). Once the granular attack window passes and
+# the vocoder body takes over, the vocoder spectrum is FROZEN (§36 spectral hold)
+# so the note is held until the next attack unfreezes it to capture the new note.
+# The held note bleeds away over SUSTAIN_REL ms (a natural release; large = an
+# endless drone). Off by default. `make ... HYBRID=1 SUSTAIN=1 SUSTAIN_REL=3000`.
+ifdef SUSTAIN
+    override CXXFLAGS += -DPOGGED_SUSTAIN
+    ifdef SUSTAIN_REL
+        override CXXFLAGS += -DPOGGED_SUSTAIN_REL_MS=$(SUSTAIN_REL).0f
+    endif
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 
