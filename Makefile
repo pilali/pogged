@@ -129,23 +129,15 @@ ifdef HYB_SWELL
     override CXXFLAGS += -DPOGGED_HYB_SWELL
 endif
 
-# §37 infinite sustain (needs HYBRID). Once the granular attack window passes and
-# the vocoder body takes over, the vocoder spectrum is FROZEN (§36 spectral hold)
-# so the note is held until the next attack unfreezes it to capture the new note.
-# The held note bleeds away over SUSTAIN_REL ms (a natural release; large = an
-# endless drone). Off by default. `make ... HYBRID=1 SUSTAIN=1 SUSTAIN_REL=3000`.
-ifdef SUSTAIN
-    override CXXFLAGS += -DPOGGED_SUSTAIN
-    ifdef SUSTAIN_REL
-        override CXXFLAGS += -DPOGGED_SUSTAIN_REL_MS=$(SUSTAIN_REL).0f
-    endif
-    # SUSTAIN_SETTLE = ms the vocoder plays LIVE after the granular attack window
-    # before freezing, so it captures the note's BODY (past the ~85 ms vocoder
-    # latency) and not the attack transient. Larger = a later, more settled
-    # capture; too large captures a note already decaying.
-    ifdef SUSTAIN_SETTLE
-        override CXXFLAGS += -DPOGGED_SUSTAIN_SETTLE_MS=$(SUSTAIN_SETTLE).0f
-    endif
+# §37 infinite sustain is a RUNTIME feature now — the `sustain` (on/off) and
+# `sustain_ms` (release; max = infinite) ports, compiled into every HYBRID build
+# and toggled while playing. Nothing to enable at build time. The one build knob
+# left is SUSTAIN_SETTLE: ms from the attack to the freeze, so the capture lands
+# on the note's BODY (past the ~85 ms vocoder latency), not the attack transient.
+# Larger = a later, more settled capture; too large captures a note already
+# decaying. `make ... HYBRID=1 SUSTAIN_SETTLE=250`.
+ifdef SUSTAIN_SETTLE
+    override CXXFLAGS += -DPOGGED_SUSTAIN_SETTLE_MS=$(SUSTAIN_SETTLE).0f
 endif
 
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include

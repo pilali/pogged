@@ -49,6 +49,8 @@ components).
 | Output | 0–200 % | Master output gain into a soft clipper. |
 | Pan (×6) | L–C–R | Per-voice placement in the stereo field (dry, −1, −2, +5th, +1, +2). Centre is full level on **both** outputs, so a single output still carries everything. |
 | Spread | 0–100 % | POG3 stereo delay on the +5th/+1/+2 voices — right channel 3× longer than left (≤150 ms / ≤50 ms). The sub octaves are excluded, as on the hardware. 0 = off (bit-transparent). |
+| Sustain | on/off | Hands-free infinite sustain (distinct from Freeze). Each note is auto-held once the vocoder body settles, until the next attack — so a held note (and its octaves) rings on while you stop or play over it. Works in **Vocoder or Hybrid** Focus (a vocoder must be sounding to freeze). Requires a `HYBRID=1` build. |
+| Sustain Time | 200 ms–5 s | How long a held note takes to fade (its release). The maximum (5 s) is treated as **infinite**: the note holds until the next attack, however long. |
 
 ## Presets
 
@@ -173,6 +175,7 @@ Work with any target, and — where noted — alongside `HYBRID=1`:
 | `HYB_SWELL=1` | off | Makes the **ATTACK** swell operative in hybrid: keys the swell to the granular engine's own onset, so it swells on every pluck like the vocoder's per-bin swell. Reads the hybrid detector only — the hybrid switch itself is untouched. |
 | `ANCHOR=<gain>` | `0` *(off)* | Mixes a resynthesised octave-lock anchor under the sub voices to steady the low octave when the input fundamental is weak. Of little benefit for attack-style playing. |
 | `XBAND=<1\|hz>` | off | Raises the vocoder crossover so the long 4096 window carries more low-mid and resolves the "dissonant wanderer" harmonic-pair midpoints. `XBAND=1` = 600 Hz; a higher value (e.g. `XBAND=900`) is cleaner but pays the 85 ms window over more of the band. |
+| `SUSTAIN_SETTLE=<ms>` | `250` | Delay from the attack to the freeze for the **Sustain** control (runtime), so the capture lands on the note's *body*, past the ~85 ms vocoder latency — not the attack transient. Larger = later, more settled; too large captures a note already decaying. Sustain on/off and its release are the `sustain` / `sustain_ms` ports, not build flags. |
 
 **A full tuned hybrid build** for the Pi 5 (current reference settings):
 

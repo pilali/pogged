@@ -57,7 +57,9 @@ enum Port : uint32_t {
     P_WARP_HEEL    = 34,   // semitones at the heel
     P_WARP_TOE     = 35,   // semitones at the toe
     P_FREEZE       = 36,   // expression position: 0 = heel (live), 1 = toe
-    P_COUNT        = 37
+    P_SUSTAIN      = 37,   // §37 infinite-sustain toggle [0/1]
+    P_SUSTAIN_MS   = 38,   // held-note release ms [200 – 5000], 5000 = infinite
+    P_COUNT        = 39
 };
 
 // Control ports are 2..13 and 15..20; index 14 is audio, so the ctl[] slot at
@@ -150,6 +152,8 @@ static void run(LV2_Handle handle, uint32_t n_samples)
         ctl(p, P_WARP_HEEL),
         ctl(p, P_WARP_TOE),
         ctl(p, P_FREEZE),
+        ctl(p, P_SUSTAIN),
+        ctl(p, P_SUSTAIN_MS),
     };
 
     pogged_dsp_process(p->dsp, &params, p->audio_in,

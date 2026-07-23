@@ -97,6 +97,12 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     // to it, and the same is true of the modgui.
     p.add(std::make_unique<AF>(pid("freeze"), "Freeze + Gliss", Range(0.0f, 1.0f), 0.0f));
 
+    // §37 SUSTAIN — a hands-free infinite sustain, distinct from FREEZE: each note
+    // is auto-held once the vocoder body settles, until the next attack (Vocoder
+    // or Hybrid Focus). On/off, plus a release time whose max means "hold forever".
+    p.add(std::make_unique<juce::AudioParameterBool>(pid("sustain"), "Sustain", false));
+    p.add(std::make_unique<AF>(pid("sustain_ms"), "Sustain Time", Range(200.0f, 5000.0f), 3000.0f));
+
     return p;
 }
 
@@ -141,6 +147,8 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pWarpHeel = raw("warp_heel");
     pWarpToe  = raw("warp_toe");
     pFreeze   = raw("freeze");
+    pSustain  = raw("sustain");
+    pSustainMs = raw("sustain_ms");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -195,7 +203,7 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pFiltEnvD->load(), pFiltSens->load(), pRange->load(), pFocus->load(),
         pInGain->load(), pDryAtk->load(), pDryFilt->load(), pDryDet->load(),
         pWarp->load(), pWarpHeel->load(), pWarpToe->load(),
-        pFreeze->load()
+        pFreeze->load(), pSustain->load(), pSustainMs->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.

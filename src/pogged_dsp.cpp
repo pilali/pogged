@@ -344,24 +344,29 @@ static constexpr float HYB_RISE_MS = 12.0f;
 static constexpr float HYB_ONSET_SENS = 0.88f;
 static constexpr float HYB_FALL_MS = 8.0f;
 
-// §37 infinite sustain (build -DPOGGED_SUSTAIN). Once the granular attack window
-// (HYB_HOLD) has passed and the vocoder body takes over, freeze the vocoder
-// spectrum (§36 hold) so the note is held until the next attack, which unfreezes
-// it to capture the new note during the granular window. SUSTAIN_REL_MS is how
-// slowly the held note bleeds away (a natural release; large = an endless
-// drone). Only meaningful with POGGED_DYN_FOCUS (the hybrid).
+// §37 infinite sustain — a runtime feature (the `sustain` / `sustain_ms` ports),
+// compiled into every POGGED_DYN_FOCUS build and gated at run time. On each
+// attack the note is captured, then once the vocoder body has settled (§37 the
+// SETTLE delay below, past the ~85 ms window latency so the BODY is held, not
+// the attack transient) its spectrum is frozen (§36) and held — smoothly, with a
+// per-partial phase continuation — until the next attack unfreezes it. Works in
+// Vocoder OR Hybrid Focus (a vocoder must be sounding to freeze). The release
+// time comes from the `sustain_ms` port; the top of its range means an endless
+// drone. This is the init default before the first block reads the port.
 #ifndef POGGED_SUSTAIN_REL_MS
 #define POGGED_SUSTAIN_REL_MS 3000.0f
 #endif
 static constexpr float SUSTAIN_REL_MS = POGGED_SUSTAIN_REL_MS;
-// After the granular attack window ends, let the vocoder play LIVE this long
-// before freezing, so its ~85 ms-latency output has settled onto the note's
-// BODY rather than the attack transient (freezing too early held the attack —
-// a short, warbly "period"). Covers the long window's latency plus margin.
+// Delay from the attack to the freeze: long enough that the vocoder's
+// latency-delayed output has reached the note's BODY (freezing too early held
+// the attack transient — a short, warbly "period"). In Hybrid this also clears
+// the granular attack window; in Vocoder-only it is simply the settle time.
+// sustain_ms == this max means "hold until the next attack, however long".
 #ifndef POGGED_SUSTAIN_SETTLE_MS
-#define POGGED_SUSTAIN_SETTLE_MS 150.0f
+#define POGGED_SUSTAIN_SETTLE_MS 250.0f
 #endif
 static constexpr float SUSTAIN_SETTLE_MS = POGGED_SUSTAIN_SETTLE_MS;
+static constexpr float SUSTAIN_MAX_MS    = 5000.0f;   // at/above this = infinite
 
 // ── Transient reinjection (§18) ──────────────────────────────────────────────
 // The wet's FELT latency is its attack's: the pitched body cannot arrive
@@ -419,7 +424,7 @@ struct PoggedDsp {
     int           hyb_hold = 0;             // §30: samples left holding granular
     bool          voc_frozen = false;       // §37: vocoder spectrum currently held
     int           sust_wait  = 0;           // §37: settle countdown before freezing
-#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
+#ifdef POGGED_DYN_FOCUS
     SubVocoder    pv_fund;                  // §37b: unity voice held with the sustain,
     float         g_fund = 0.0f;            //       so the PLAYED octave sustains too
 #endif
@@ -619,8 +624,8 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         if (v == V_SUB1 || v == V_SUB2) {
             p->pv_sub[v].init(sample_rate, v * (SubVocoder::HOP / N_VOICES));
             p->pv_sub[v].set_ratio(VOICE_RATIO[v]);
-#ifdef POGGED_SUSTAIN
-            p->pv_sub[v].set_hold_release(SUSTAIN_REL_MS);   // §37
+#ifdef POGGED_DYN_FOCUS
+            p->pv_sub[v].set_hold_release(SUSTAIN_REL_MS);   // §37 init default
 #endif
 #ifndef POGGED_PV_N
             p->pv_sub[v].prony(false, false);   // bare, like 351591f — no §22
@@ -642,8 +647,8 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         }
         p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
-#ifdef POGGED_SUSTAIN
-        p->pv[v].set_hold_release(SUSTAIN_REL_MS);           // §37
+#ifdef POGGED_DYN_FOCUS
+        p->pv[v].set_hold_release(SUSTAIN_REL_MS);           // §37 init default
 #endif
 #ifndef POGGED_PV_N
         // §29: the UP-shift voices render from the LONG window only. The §20
@@ -687,7 +692,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     }
 #endif
 
-#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
+#ifdef POGGED_DYN_FOCUS
     // §37b: the held unison. Renders the note at the PLAYED octave (ratio 1) so
     // the sustain holds the fundamental too, not just the transposed voices. Long
     // window only (its latency is free on a held note) and it only SOUNDS while
@@ -743,7 +748,7 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->hyb_hold = 0;
     p->voc_frozen = false;              // §37: pv/pv_sub reset() cleared their hold
     p->sust_wait  = 0;
-#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
+#ifdef POGGED_DYN_FOCUS
     p->pv_fund.reset();
     p->g_fund = 0.0f;
 #endif
@@ -842,9 +847,20 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // onset-driven hold/rise/fall (granular attack, vocoder body).
     const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
     const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
-#ifdef POGGED_SUSTAIN
-    const int   sust_settle_n = (int)(SUSTAIN_SETTLE_MS * 0.001f * sr);
-#endif
+    // §37 sustain (runtime): on/off, and the release fed to every wet vocoder.
+    // sustain_ms at its max means an infinite hold (release 0 = drone).
+    const bool  sustain_on = p_->sustain > 0.5f;
+    const int   sust_delay_n = (int)(SUSTAIN_SETTLE_MS * 0.001f * sr);
+    if (sustain_on) {
+        const float sms = std::clamp(p_->sustain_ms, 200.0f, SUSTAIN_MAX_MS);
+        const float rel = (sms >= SUSTAIN_MAX_MS) ? 0.0f : sms;   // max = infinite
+        for (int v = 0; v < N_VOICES; ++v) {
+            if (v == V_DRYD) continue;
+            if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_hold_release(rel);
+            else                            p->pv[v].set_hold_release(rel);
+        }
+        p->pv_fund.set_hold_release(rel);
+    }
     // §35: are we in the hybrid engine mode this block? Used to key the ATTACK
     // swell to the granular's own onset (see the swell block below).
     [[maybe_unused]] const bool hyb_mode = std::clamp(p_->focus, 0.0f, 2.0f) >= 1.5f;
@@ -1038,21 +1054,6 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     float*   ring = p->ring.data();
     const uint32_t mask = p->mask;
 
-#if defined(POGGED_SUSTAIN) && defined(POGGED_DYN_FOCUS)
-    // §37: if Focus is not on hybrid but a freeze is still latched (the user
-    // turned Focus away while a note was held), release every voice so the
-    // vocoder resumes the live signal. One check per block.
-    if (!hyb_mode && p->voc_frozen) {
-        for (int vv = 0; vv < N_VOICES; ++vv) {
-            if (vv == V_DRYD) continue;
-            if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(false);
-            else                              p->pv[vv].hold(false);
-        }
-        p->pv_fund.hold(false);
-        p->voc_frozen = false;
-    }
-#endif
-
     for (uint32_t i = 0; i < n_samples; ++i) {
         // INPUT GAIN is "the level of the signal seen at the input", so it is
         // applied before everything — the ring the voices read, the dry, and
@@ -1183,35 +1184,35 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             // onset's own broadband transient masks the step on notes still
             // ringing. Then hold granular through the vocoder's latency and
             // rise to the vocoder body over the short HYB_RISE.
-            if (hyb_onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f;
-                             p->sust_wait = -1; }
+            if (hyb_onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f; }
             hyb_target = (p->hyb_hold > 0) ? 0.0f : (1.0f - HYB_FLOOR);
             if (p->hyb_hold > 0) --p->hyb_hold;
             hyb_coef = hyb_rise_c;
-#ifdef POGGED_SUSTAIN
-            // §37: infinite sustain. After the granular attack window ends, let
-            // the vocoder play LIVE for SUSTAIN_SETTLE so its latency-delayed
-            // output settles onto the note's BODY, THEN freeze its spectrum so
-            // the note is held (with SUSTAIN_REL release) until the next onset
-            // unfreezes it to capture the new note. NEVER while the manual FREEZE
-            // is engaged (§31) — the two holds are independent. Edge-triggered:
-            // hold() is a bool set, applied per voice only on the transition.
-            if (p->hyb_hold == 0 && p->sust_wait < 0) p->sust_wait = sust_settle_n;
-            else if (p->sust_wait > 0)                --p->sust_wait;
-            const bool want_frozen =
-                (p->hyb_hold == 0 && p->sust_wait == 0) && !p->frz_engaged;
-            if (want_frozen != p->voc_frozen) {
-                for (int vv = 0; vv < N_VOICES; ++vv) {
-                    if (vv == V_DRYD) continue;
-                    if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(want_frozen);
-                    else                              p->pv[vv].hold(want_frozen);
-                }
-                p->pv_fund.hold(want_frozen);   // §37b: the held unison
-                p->voc_frozen = want_frozen;
-            }
-#endif
         }
         p->g_focus += hyb_coef * (hyb_target - p->g_focus);
+
+        // §37 infinite sustain — runs in Vocoder (fsel in [0.5,1.5)) AND Hybrid
+        // (>=1.5) Focus, gated at run time by the `sustain` port. On each attack
+        // recapture (restart the settle countdown); once it elapses — the body
+        // has settled past the vocoder latency — freeze (§36) and HOLD until the
+        // next attack. Never while the manual FREEZE (§31) is engaged: the two
+        // holds are independent. Not in granular Focus (no vocoder to freeze).
+        // Edge-triggered: hold() is set per voice only on the transition.
+        bool want_frozen = false;
+        if (sustain_on && fsel >= 0.5f && !p->frz_engaged) {
+            if (hyb_onset)             p->sust_wait = sust_delay_n;   // new note
+            else if (p->sust_wait > 0) --p->sust_wait;
+            want_frozen = (p->sust_wait == 0);
+        }
+        if (want_frozen != p->voc_frozen) {
+            for (int vv = 0; vv < N_VOICES; ++vv) {
+                if (vv == V_DRYD) continue;
+                if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(want_frozen);
+                else                              p->pv[vv].hold(want_frozen);
+            }
+            p->pv_fund.hold(want_frozen);   // §37b: the held unison
+            p->voc_frozen = want_frozen;
+        }
 #else
         p->g_focus += focus_c * (focus_t - p->g_focus);
 #endif
@@ -1221,14 +1222,13 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // phase-incoherent, so a linear fade would dip up to -3 dB mid-cross.
         float g_gran = std::sqrt(std::max(0.0f, 1.0f - fx));
         float g_voc  = std::sqrt(std::max(0.0f, fx));
-#ifdef POGGED_SUSTAIN
         // §37: while a note is held, the sustain is PURE vocoder — no granular at
-        // all (its splice warble must not colour the held body).
+        // all (its splice warble must not colour the held body). voc_frozen is
+        // only ever true when the sustain is engaged.
         if (p->voc_frozen) { g_gran = 0.0f; g_voc = 1.0f; }
-#endif
 #else
-        const float g_gran = 1.0f - fx;
-        const float g_voc  = fx;
+        [[maybe_unused]] const float g_gran = 1.0f - fx;   // unused in NO_VOCODER
+        [[maybe_unused]] const float g_voc  = fx;
 #endif
         // The wet swell per engine: granular takes the global envelope (a
         // POG2-style duck-and-reswell on every onset), the vocoder swells per
@@ -1328,14 +1328,15 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             spread_mix(V_UP2, o, p->p_up2);
         }
 
-#if defined(POGGED_SUSTAIN) && !defined(POGGED_NO_VOCODER)
-        // §37b: the held unison, so the PLAYED octave sustains with the rest.
-        // Advanced every sample (it must stay warm to freeze cleanly) but it only
-        // SOUNDS while frozen, its gain ramping to the DRY level — during play the
-        // live dry carries the fundamental, so nothing doubles.
-        {
+#ifdef POGGED_DYN_FOCUS
+        // §37b: the held unison, so the PLAYED octave sustains with the rest. It
+        // only SOUNDS while frozen (gain ramps to the DRY level) — during play the
+        // live dry carries the fundamental, so nothing doubles. Run it only while
+        // the sustain is on (or still ramping out after it was switched off), so
+        // it costs nothing when the feature is idle.
+        if (sustain_on || p->g_fund > 1e-4f) {
             const float fund = p->pv_fund.process(ring, mask, p->wpos);
-            const float ftgt = p->voc_frozen ? dry_t : 0.0f;
+            const float ftgt = (sustain_on && p->voc_frozen) ? dry_t : 0.0f;
             p->g_fund += gc * (ftgt - p->g_fund);
             wet_l += p->g_fund * fund;
             wet_r += p->g_fund * fund;
