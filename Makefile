@@ -74,7 +74,10 @@ endif
 ifdef HYBRID
     override CXXFLAGS += -DPOGGED_DYN_FOCUS
     GRAIN_UP  ?= 12
-    GRAIN_PER ?= 1.5
+    # Sub-voice grain length in periods. 3.0 (validated by ear) holds the low
+    # octave stably; drop it (e.g. GRAIN_PER=2.0) for a tighter, slightly less
+    # stable sub. Below ~2 it warbles.
+    GRAIN_PER ?= 3.0
     override CXXFLAGS += -DPOGGED_GRAIN_UP_MS=$(GRAIN_UP).0f -DPOGGED_GRAIN_PERIODS=$(GRAIN_PER)f
     # §30 CPU: the hybrid runs both engines, so trim the vocoder to fit tight
     # JACK buffers (64). OS=4 on the up voices (the user confirmed OS=8≈OS=4 by
@@ -111,11 +114,11 @@ endif
 # baritone low B sings at 92 Hz) so the granular splice warbles into "bouillie".
 # GRAIN_UP_PER > 0 sizes each up voice's grain to span that many periods of its
 # LOWEST output at the range, floored at GRAIN_UP so high notes stay tight.
-# 0 (unset) = the old fixed behaviour. Tune by ear, e.g.
-# `make TARGET=rpi5 HYBRID=1 GRAIN_UP=10 GRAIN_PER=2.5 GRAIN_UP_PER=2.2`.
-ifdef GRAIN_UP_PER
-    override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)f
-endif
+# Defaults to 3.0 (validated by ear — stable +1/fifth on low notes); pass
+# GRAIN_UP_PER=0 to restore the old fixed grain, or another value to trade
+# stability against latency. `make ... GRAIN_UP_PER=2.2`.
+GRAIN_UP_PER ?= 3.0
+override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)f
 
 # §35 ATTACK swell in HYBRID mode. In hybrid the granular renders the attack and
 # swells only via the global env, which was keyed to `det` (attack_sens) — far
