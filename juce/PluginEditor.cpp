@@ -376,6 +376,7 @@ namespace {
 
             { "attack_ms",    "ATTACK", "", false, "dry_attack", false,
               {{ "attack_sens", "SENS" }} },
+            { "sustain",      "SUSTAIN", "", false, "", false, {} },
             { "lp_cutoff",    "FILTER", "", false, "dry_filter", true,
               {{ "lp_q", "Q" }, { "filter_env", "ENV", true }} },
             { "detune_cents", "DETUNE", "", false, "dry_detune", false,

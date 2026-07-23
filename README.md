@@ -49,8 +49,7 @@ components).
 | Output | 0–200 % | Master output gain into a soft clipper. |
 | Pan (×6) | L–C–R | Per-voice placement in the stereo field (dry, −1, −2, +5th, +1, +2). Centre is full level on **both** outputs, so a single output still carries everything. |
 | Spread | 0–100 % | POG3 stereo delay on the +5th/+1/+2 voices — right channel 3× longer than left (≤150 ms / ≤50 ms). The sub octaves are excluded, as on the hardware. 0 = off (bit-transparent). |
-| Sustain | on/off | Hands-free infinite sustain (distinct from Freeze). Each note is auto-held once the vocoder body settles, until the next attack — so a held note (and its octaves) rings on while you stop or play over it. Works in **Vocoder or Hybrid** Focus (a vocoder must be sounding to freeze). Requires a `HYBRID=1` build. |
-| Sustain Time | 200 ms–5 s | How long a held note takes to fade (its release). The maximum (5 s) is treated as **infinite**: the note holds until the next attack, however long. |
+| Sustain | 0 / 200 ms–5 s | Hands-free infinite sustain (distinct from Freeze). One fader carries both on/off **and** the hold time: **0 = off**; above 0 auto-holds each note (once the vocoder body settles) until the next attack, fading over that release time; the **maximum (5 s) = infinite** (holds until you play again). Works in **Vocoder or Hybrid** Focus (a vocoder must be sounding to freeze). Requires a `HYBRID=1` build. |
 
 ## Presets
 

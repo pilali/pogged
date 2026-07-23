@@ -84,7 +84,6 @@ private:
     std::atomic<float>* pWarpToe  = nullptr;
     std::atomic<float>* pFreeze   = nullptr;
     std::atomic<float>* pSustain  = nullptr;
-    std::atomic<float>* pSustainMs = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedAudioProcessor)
 };

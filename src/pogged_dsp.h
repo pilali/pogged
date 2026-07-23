@@ -100,15 +100,13 @@ typedef struct {
                                             or a DAW's automation / MIDI learn)
                                             rather than as a fader nobody would
                                             drag by hand.                       */
-    float sustain;       /* idx 37 [0/1]  §37 infinite-sustain toggle. Distinct
-                                            from FREEZE: this auto-holds each note
-                                            (once the vocoder body settles) until
-                                            the next attack, in Vocoder or Hybrid
-                                            Focus. 0 = off.                      */
-    float sustain_ms;    /* idx 38 [200 – 5000]  how long a held note takes to
-                                            fade (its release). 5000 = the max is
-                                            treated as INFINITE: the note holds
-                                            until the next attack, however long.  */
+    float sustain;       /* idx 37 [0 – 5000]  §37 sustain, one control carrying
+                                            both its on/off AND its decay: 0 = off,
+                                            > 0 = ON with that release time in ms.
+                                            The maximum (5000) is treated as
+                                            INFINITE — the note holds until the
+                                            next attack, however long. Distinct
+                                            from FREEZE; works in Vocoder/Hybrid.  */
 } PoggedParams;
 
 typedef struct PoggedDsp PoggedDsp;          /* opaque state */

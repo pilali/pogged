@@ -335,7 +335,7 @@
    through the ATTACK lamp and overhung the right by 42px. modgui_measure.js
    now checks both brackets against the columns they group, so a column change
    fails the tool instead of silently sliding the bracket off its buttons. */
-.pogged-panel{{{cns}}} .pogged-bracket-focus { left: 106px; right: 218px; }
+.pogged-panel{{{cns}}} .pogged-bracket-focus { left: 82px; right: 242px; }
 /* FOCUS 3-way selector rides ON the bracket's HORIZONTAL LINE — its centre sits
    on the bottom border (the wide line), not on the middle of the 7 px box whose
    height includes the side ticks. bottom:0 puts its lower edge on the line, then

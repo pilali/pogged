@@ -847,12 +847,14 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // onset-driven hold/rise/fall (granular attack, vocoder body).
     const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
     const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
-    // §37 sustain (runtime): on/off, and the release fed to every wet vocoder.
-    // sustain_ms at its max means an infinite hold (release 0 = drone).
-    const bool  sustain_on = p_->sustain > 0.5f;
+    // §37 sustain (runtime): ONE control carries both on/off and the release.
+    // 0 = off; > 0 = on with that release (floored at 200 ms); the max = infinite
+    // (release 0 = drone, holds until the next attack).
+    const float sustain_val = std::clamp(p_->sustain, 0.0f, SUSTAIN_MAX_MS);
+    const bool  sustain_on  = sustain_val > 0.5f;
     const int   sust_delay_n = (int)(SUSTAIN_SETTLE_MS * 0.001f * sr);
     if (sustain_on) {
-        const float sms = std::clamp(p_->sustain_ms, 200.0f, SUSTAIN_MAX_MS);
+        const float sms = std::max(200.0f, sustain_val);
         const float rel = (sms >= SUSTAIN_MAX_MS) ? 0.0f : sms;   // max = infinite
         for (int v = 0; v < N_VOICES; ++v) {
             if (v == V_DRYD) continue;

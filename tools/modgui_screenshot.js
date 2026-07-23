@@ -33,6 +33,7 @@ const PORTS = {
   filter_sens: 0.5, range_mode: 0, focus: 1,
   input_gain: 1.0, dry_attack: 0, dry_filter: 0, dry_detune: 0,
   warp: 0.0, warp_heel: 0.0, warp_toe: 12.0,
+  freeze: 0.0, sustain: 0.0,
 };
 
 const PANEL_W = 640, PANEL_H = 500;

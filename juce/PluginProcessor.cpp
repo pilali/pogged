@@ -99,9 +99,9 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
 
     // §37 SUSTAIN — a hands-free infinite sustain, distinct from FREEZE: each note
     // is auto-held once the vocoder body settles, until the next attack (Vocoder
-    // or Hybrid Focus). On/off, plus a release time whose max means "hold forever".
-    p.add(std::make_unique<juce::AudioParameterBool>(pid("sustain"), "Sustain", false));
-    p.add(std::make_unique<AF>(pid("sustain_ms"), "Sustain Time", Range(200.0f, 5000.0f), 3000.0f));
+    // or Hybrid Focus). ONE fader carries on/off AND the decay: 0 = off, above 0 =
+    // on with that release (ms), the max (5000) = infinite.
+    p.add(std::make_unique<AF>(pid("sustain"), "Sustain", Range(0.0f, 5000.0f), 0.0f));
 
     return p;
 }
@@ -148,7 +148,6 @@ PoggedAudioProcessor::PoggedAudioProcessor()
     pWarpToe  = raw("warp_toe");
     pFreeze   = raw("freeze");
     pSustain  = raw("sustain");
-    pSustainMs = raw("sustain_ms");
 }
 
 PoggedAudioProcessor::~PoggedAudioProcessor()
@@ -203,7 +202,7 @@ void PoggedAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         pFiltEnvD->load(), pFiltSens->load(), pRange->load(), pFocus->load(),
         pInGain->load(), pDryAtk->load(), pDryFilt->load(), pDryDet->load(),
         pWarp->load(), pWarpHeel->load(), pWarpToe->load(),
-        pFreeze->load(), pSustain->load(), pSustainMs->load()
+        pFreeze->load(), pSustain->load()
     };
 
     // Mono-in engine (guitar): sum the input to mono, process once to stereo.
