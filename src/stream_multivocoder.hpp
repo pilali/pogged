@@ -98,6 +98,16 @@ public:
         _hi.set_swell(atk_ms);
     }
 
+    // §36: spectral HOLD, forwarded to both windows so the whole band freezes
+    // (and resumes) coherently. long_only() runs only _lo, but holding _hi too
+    // is harmless and keeps the split path correct.
+    void hold(bool on) noexcept { _lo.hold(on); _hi.hold(on); }
+    bool held() const noexcept { return _lo.held(); }
+    void set_hold_release(float release_ms) noexcept {
+        _lo.set_hold_release(release_ms);
+        _hi.set_hold_release(release_ms);
+    }
+
     // §20 stability tuning, per window: the two windows sit in different
     // resolution regimes (the long one partially resolves what the short one
     // merges), so their best smoothing steps differ — measured, not assumed.

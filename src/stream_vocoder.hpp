@@ -157,6 +157,22 @@ public:
         _swell_c = (frames > 1.0f) ? std::exp(-std::log(9.0f) / frames) : 0.0f;
     }
 
+    // §36: spectral HOLD. While on, the analysis is frozen and only the
+    // synthesis runs, so the sound sustains SMOOTHLY (no loop period, unlike a
+    // time-domain freeze). Turning it on captures whatever was last analysed;
+    // turning it off resumes the live signal. Idempotent.
+    void hold(bool on) noexcept { _hold = on; }
+    bool held() const noexcept { return _hold; }
+
+    // Release time for the held spectrum, in ms (a -something-per-ms bleed of
+    // the frozen magnitudes). <= 0 holds indefinitely (a constant drone). The
+    // constant is a per-frame factor, so it tracks the hop rate.
+    void set_hold_release(float release_ms) noexcept {
+        _hold_decay = (release_ms <= 0.0f)
+                    ? 1.0f
+                    : std::exp(-(float)HOP / (release_ms * 0.001f * _sr));
+    }
+
     // §20 stability tunables — build-time knobs, not host-exposed. Kept as
     // members (not constexpr) so the offline harnesses can sweep them; the
     // defaults are the values frozen by the §20 sweep.
@@ -233,7 +249,11 @@ public:
 
 private:
     // ── FFT frame ─────────────────────────────────────────────────────────
-    void _process_frame(const float* ring, uint32_t mask, uint64_t wpos) noexcept {
+    // Read the newest N samples behind the write head and analyse them into
+    // _ana_mag / _ana_freq / _ana_cx (per-bin magnitude, instantaneous frequency,
+    // de-alternated complex lobe). Skipped while the spectral HOLD is engaged
+    // (§36) — that freeze is exactly "stop analysing, keep synthesising".
+    void _analyse(const float* ring, uint32_t mask, uint64_t wpos) noexcept {
         // The newest N samples behind the write head. Megalo interpolated a
         // fractional loop position here; streaming needs none — the frame is
         // read at normal speed and lands on integer samples.
@@ -291,6 +311,20 @@ private:
         }
 
         _ph_idx = (_ph_idx + 1) % EB;
+    }
+
+    void _process_frame(const float* ring, uint32_t mask, uint64_t wpos) noexcept {
+        // §36: spectral HOLD — while held, skip the ring read + analysis (which
+        // also saves its FFT); the synthesis below runs on the LAST frame's
+        // _ana_* with the phasors still advancing → a smooth, non-looping
+        // sustain, unlike the time-domain loop freeze. _hold_decay bleeds the
+        // frozen spectrum down each frame for a natural, adjustable release
+        // (1.0 = a constant drone).
+        if (!_hold) {
+            _analyse(ring, mask, wpos);
+        } else if (_hold_decay < 1.0f) {
+            for (int k = 0; k < BINS; ++k) { _ana_cx[k] *= _hold_decay; _ana_mag[k] *= _hold_decay; }
+        }
 
         // ── Per-peak pitch shift (Laroche & Dolson 1999) ────────────────────
         // Each spectral peak (= one partial) is translated to its target
@@ -409,9 +443,13 @@ private:
             // §22: parametric rendering needs a full history and a real shift
             // (the unity-ratio dry copy must stay bit-faithful to the rigid
             // path, which is an identity there).
-            const bool prony_ready = PRONY_ON && _warm >= PK &&
+            // §36: both engines lean on a LIVE frame history (Prony fit / hint
+            // import); while held the history is frozen and stale, so fall back
+            // to the plain per-peak translation — that alone is what carries the
+            // smooth sustain.
+            const bool prony_ready = PRONY_ON && _warm >= PK && !_hold &&
                                      std::abs(_ratio - 1.0f) > 0.01f;
-            const bool hints_ready = _n_hints > 0 &&
+            const bool hints_ready = _n_hints > 0 && !_hold &&
                                      std::abs(_ratio - 1.0f) > 0.01f;
             for (int i = 0; i < n_peaks; ++i) {
                 const int   p      = _peaks[i];
@@ -897,6 +935,8 @@ private:
     }
 
     // ── State ──────────────────────────────────────────────────────────────
+    bool  _hold       = false;   // §36: spectral freeze — analysis frozen
+    float _hold_decay = 1.0f;    // §36: per-frame magnitude bleed (1 = drone)
     float _sr        = 48000.0f;
     float _ratio     = 1.0f;
     float _freq_pbin = 48000.0f / N;
