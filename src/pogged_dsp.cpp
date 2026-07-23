@@ -11,6 +11,93 @@
 #include "stream_shifter.hpp"
 #ifndef POGGED_NO_VOCODER
 #include "stream_vocoder.hpp"
+#include "stream_multivocoder.hpp"
+#include "octave_anchor.hpp"
+// FOCUS's vocoder path. Multi-resolution (§13): the long window resolves the
+// bass, the short one carries the treble and the attacks. A target that pins
+// POGGED_PV_N (the Duo X pins 2048 for CPU) keeps the historic single window
+// at that size instead.
+#ifdef POGGED_PV_N
+using PoggedVocoder = StreamVocoder;
+using SubVocoder    = StreamVocoder;   // §27: single 2048 window is already OS=4
+#else
+// OS=8 (§21): 87.5 % overlap — same windows, same latency, twice the frame
+// density, so the OLA averages 8 renderings and frame-rate artifacts smooth
+// out (chord worst case 74.5 -> 71.9 dB, no regression elsewhere once the
+// estimator baseline was decoupled from the hop). Costs 2x the FFT work —
+// affordable since the real FFT (§19).
+#ifndef POGGED_PV_OS
+#define POGGED_PV_OS 8   // up-voice overlap factor; -DPOGGED_PV_OS=4 for the A/B
+#endif
+using PoggedVocoder = MultiVocoder<4096, 2048, POGGED_PV_OS>;
+// §27: the DOWN voices (÷2, ÷4) get their OWN engine at OS=4, bare. The whole
+// §20-§26 arc (OS=8, §22 Prony, §24 hints, §26 input cap) was tuned for the UP
+// voices' chord artefacts and applied globally; on the sub it SMEARED attacks
+// (measured 73 ms rise at OS=4 -> 153 ms at OS=8) and added the "gurgle" the
+// ear rejected — the user judged the sub "largely better" at commit 351591f,
+// which was exactly this simple OS=4 shape. So the sub goes back to it while
+// the up voices keep the OS=8 machinery that helps THEM.
+using SubVocoder    = MultiVocoder<4096, 2048, 4>;
+// §20 — the LATENCY BUDGET is the spec. The user A/B'd every build of the
+// §13-§19 arc on the pedalboard and ruled: the 4096+2048 profile (85 ms
+// bass, 42 ms above the crossover) is the usable quality/latency point;
+// anything slower is out of spec. The 8192-based §16 shape measures far
+// cleaner on collisions (excess AM +1.4 vs +14.7 dB) but its 171/85 ms feel
+// failed the instrument test. So the windows and the FIXED output-side
+// 250 Hz crossover below are the §13 shape — while every latency-NEUTRAL
+// gain since is kept: LR8 crossover (§15), real FFT (§19), transient
+// reinjection (§18), per-bin swell (§14). Timbre stability within this
+// budget is the open §20 program; shimmer_test ratchets it.
+//
+// §25 EXPERIMENT (build with XBAND=1; default OFF). The dominant audible
+// artifact the ear caught was NOT the §24 fundamental-pair midpoint (~249 Hz,
+// fixed) but the SECOND-harmonic pair's midpoint (~498 Hz on a low third), at
+// -8.5 dB — "almost the same level as the rest". It sits ABOVE the 250
+// crossover, so the SHORT window rendered it, and 2048 cannot resolve that
+// pair (2.4 bins) -> it smears the merged lobe to the pair midpoint. §25
+// raises the crossover 250 -> 600, handing the whole 250-600 band to the
+// 4096 LONG window, which DOES resolve the h2 pair (4.9 bins): 498 drops
+// -8.5 -> -23 dB. With the pair no longer at the crossover edge, the long
+// window's §22 also engages on the FUNDAMENTAL pair (fmin 0) and kills the
+// 249 midpoint (-> -28). Chord excess-AM mean improves 17.4 -> 12.9 dB.
+//   TWO measured costs, both for the ear to rule on:
+//   1. LATENCY: the 250-600 Hz output band moves from the 42 ms short window
+//      to the 85 ms long window — a real low-mid latency increase.
+//   2. ROUGHNESS: §22 on the fundamental pair adds 5-80 Hz flutter (shimmer
+//      roughness mean 1.87 -> 2.32 — but the WORST added flutter improves
+//      13.5 -> 10.6; the mean rise is reduced over-smoothing, not audible
+//      shimmer). Still a FLAG until it is the default.
+//
+// The crossover is a PURITY/LATENCY DIAL, not a single point: each step up
+// hands one more harmonic pair to the 4096 window and removes its whole
+// family of midpoint parasites (triad forest, lines > -25 dB: 250 -> 106,
+// 600 -> 67, 900 -> 49; the h2 midpoint dies past ~560, the h3 past ~830).
+// Higher = cleaner but the attack in that band comes through the 85 ms
+// window. Build XBAND=<hz> to set it (XBAND=1 keeps the §25 default 600).
+#ifdef POGGED_XBAND
+  #ifdef POGGED_XOVER
+static constexpr float VOC_XOVER_OUT  = (float)POGGED_XOVER;
+  #else
+static constexpr float VOC_XOVER_OUT  = 600.0f;
+  #endif
+static constexpr float VOC_PRONY_FMIN = 0.0f;
+#else
+static constexpr float VOC_XOVER_OUT  = 250.0f;
+static constexpr float VOC_PRONY_FMIN = 160.0f;
+#endif
+// §28: how loud the octave-lock anchor sits under the raw sub. It is a
+// work-in-progress (Spike 12): the streaming build currently only nudges the
+// octave (33/36 vs the raw sub's 32) and beats faintly against the raw sub on
+// sustained clean chords — so it ships OFF (0.0f), with zero CPU cost (the
+// anchor's per-sample work is guarded by ANCHOR_MIX > 0 and folded away when
+// it is a zero constant). Build -DPOGGED_ANCHOR_MIX=1.0f to develop/audition
+// it. Open work: sub-Hz f0 (parabolic peak) to stop the beat, stronger
+// detection for the hard notes (weak-fundamental / sub-audible).
+#ifndef POGGED_ANCHOR_MIX
+#define POGGED_ANCHOR_MIX 0.0f
+#endif
+static constexpr float ANCHOR_MIX = POGGED_ANCHOR_MIX;
+#endif
 #endif
 #include "delay_line.hpp"
 #include "freeze_loop.hpp"
@@ -163,12 +250,36 @@ static inline float range_f_low(float v) noexcept {
 }
 // Grain spans this many periods of the voice's own output; the scan covers
 // half a period, which is all the aligner needs to find the in-phase point.
-static constexpr float GRAIN_PERIODS = 2.2f;
+#ifndef POGGED_GRAIN_PERIODS
+#define POGGED_GRAIN_PERIODS 2.2f
+#endif
+static constexpr float GRAIN_PERIODS = POGGED_GRAIN_PERIODS;
 static constexpr float ALIGN_PERIODS = 0.5f;
 // Capped so the read stays well inside the ring and smearing stays bounded:
 // a bass's -2 voice emits 7.7 Hz, which is a rumble, not a pitch — sizing
 // grains for it would smear everything else for nothing.
 static constexpr float GRAIN_MAX_MS  = 160.0f;
+
+// The UP voices' fixed grain length (ms). Kept short for a tight, low-latency
+// attack (the granular's whole reason to exist beside the vocoder).
+#ifndef POGGED_GRAIN_UP_MS
+#define POGGED_GRAIN_UP_MS 25.0f
+#endif
+static constexpr float GRAIN_UP_MS_C = POGGED_GRAIN_UP_MS;
+
+// §34: the UP voices used a FIXED grain, sized once for every note. On a LOW
+// note the up-output is still low enough that a fixed short grain spans less
+// than a period — the +5th of a baritone low B sings at 92 Hz, and a 10 ms
+// grain is 0.9 of its 10.8 ms period — so the aligner has no full cycle to
+// lock onto and the splice warbles into "bouillie" (the user, on the +1 and
+// the fifth from F# down). When > 0, size each up voice's grain to span at
+// least this many periods of the LOWEST output it emits at the current range,
+// floored at GRAIN_UP_MS so high notes keep their tight attack. 0 = the old
+// fixed behaviour (1f1f52b).
+#ifndef POGGED_GRAIN_UP_PERIODS
+#define POGGED_GRAIN_UP_PERIODS 0.0f
+#endif
+static constexpr float GRAIN_UP_PERIODS = POGGED_GRAIN_UP_PERIODS;
 
 // ── FOCUS: which pitch engine ────────────────────────────────────────────────
 // The POG3 has a FOCUS button that swaps the transposition algorithm, and its
@@ -177,7 +288,9 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 //
 //              artifact over an ideal shift (sub, chord)   latency
 //   granular             +4.8 dB                            3 ms
-//   vocoder              +0.0 dB                           85 ms
+//   vocoder              +0.0 dB                           42 ms above 250 Hz,
+//                                                          85 ms below
+//                                                          (multi-res §13/§20)
 //
 // The granular engine's aligner can only lock onto one periodicity, so a chord
 // — whose partials have incommensurable periods — makes its splices cancel
@@ -189,9 +302,84 @@ static constexpr float GRAIN_MAX_MS  = 160.0f;
 // faithful +1/+2-only FOCUS would never reach the voice that needs it.
 //
 // Switching engines crossfades over ~150 ms: they have different latencies (3
-// vs 85 ms), so a hard switch would jump the signal. Both engines run only
+// vs up to 85 ms), so a hard switch would jump the signal, and the fade must
+// outlast the long window's OLA fill (~85 ms) so the vocoder ramps in from
+// real content rather than from its zero-padded start. Both engines run only
 // during the fade; at rest exactly one does.
 static constexpr float FOCUS_XFADE_MS = 150.0f;
+
+// §30 — dynamic Focus (the POG-class hybrid). The vocoder renders a clean but
+// ~85 ms-late octave body; the granular engine renders a tight but warbly one.
+// The vocoder's latency only hurts at the ONSET (the "doublon" under the 0-
+// latency dry); its warble-free body wins once the note is ringing. So on each
+// onset we hold the GRANULAR engine (tight, fills the latency gap), then switch
+// to the VOCODER for the sustained body:
+//   - HOLD: granular-only after the onset, long enough to cover the vocoder's
+//     latency so the switch lands where the vocoder is already present;
+//   - RISE: a SHORT switch to the vocoder. The two engines are phase-incoherent,
+//     so their overlap combs — a short crossover minimises that band (the user
+//     A/B'd fast vs slow and slow-in-steady-state; the fast switch, "D1", won);
+//   - FALL: a fast-but-smooth drop back to granular on the next onset (no hard
+//     step, which would click the notes still ringing).
+// Equal-power (sqrt) crossfade, so the decorrelated pair does not dip -3 dB
+// mid-fade. Values chosen by ear on the user's own take (D1: 100/12/8 ms).
+//
+// HYB_FLOOR keeps a granular COMPONENT under the vocoder body during sustain
+// (g_focus tops out at 1-FLOOR instead of 1, so g_gran = sqrt(FLOOR) stays):
+// the body was pure vocoder and therefore FELT like the vocoder — the granular
+// floor gives it back some of the granular's immediacy/presence at the cost of
+// a little warble. 0 = the original pure-vocoder body. Tunable by ear.
+#ifndef POGGED_HYB_HOLD_MS
+#define POGGED_HYB_HOLD_MS 100.0f
+#endif
+#ifndef POGGED_HYB_FLOOR
+#define POGGED_HYB_FLOOR 0.0f
+#endif
+static constexpr float HYB_HOLD_MS = POGGED_HYB_HOLD_MS;
+static constexpr float HYB_FLOOR   = POGGED_HYB_FLOOR;
+static constexpr float HYB_RISE_MS = 12.0f;
+// Fixed sensitivity of the hybrid's own onset detector — high enough to catch
+// a re-pluck over a ringing note (8/8 on eighth-note repeats) but not so high
+// it fires on a held note (measured knee: 0.88).
+static constexpr float HYB_ONSET_SENS = 0.88f;
+static constexpr float HYB_FALL_MS = 8.0f;
+
+// §37 infinite sustain — a runtime feature (the `sustain` / `sustain_ms` ports),
+// compiled into every POGGED_DYN_FOCUS build and gated at run time. On each
+// attack the note is captured, then once the vocoder body has settled (§37 the
+// SETTLE delay below, past the ~85 ms window latency so the BODY is held, not
+// the attack transient) its spectrum is frozen (§36) and held — smoothly, with a
+// per-partial phase continuation — until the next attack unfreezes it. Works in
+// Vocoder OR Hybrid Focus (a vocoder must be sounding to freeze). The release
+// time comes from the `sustain_ms` port; the top of its range means an endless
+// drone. This is the init default before the first block reads the port.
+#ifndef POGGED_SUSTAIN_REL_MS
+#define POGGED_SUSTAIN_REL_MS 3000.0f
+#endif
+static constexpr float SUSTAIN_REL_MS = POGGED_SUSTAIN_REL_MS;
+// Delay from the attack to the freeze: long enough that the vocoder's
+// latency-delayed output has reached the note's BODY (freezing too early held
+// the attack transient — a short, warbly "period"). In Hybrid this also clears
+// the granular attack window; in Vocoder-only it is simply the settle time.
+// sustain_ms == this max means "hold until the next attack, however long".
+#ifndef POGGED_SUSTAIN_SETTLE_MS
+#define POGGED_SUSTAIN_SETTLE_MS 250.0f
+#endif
+static constexpr float SUSTAIN_SETTLE_MS = POGGED_SUSTAIN_SETTLE_MS;
+static constexpr float SUSTAIN_MAX_MS    = 5000.0f;   // at/above this = infinite
+
+// ── Transient reinjection (§18) ──────────────────────────────────────────────
+// The wet's FELT latency is its attack's: the pitched body cannot arrive
+// earlier (Gabor — §16/§17), but the pick's broadband snap can. On each onset
+// a short enveloped burst of the high-passed INPUT is summed into the wet bus
+// at (near) zero latency; the tonal body blooms behind it. The HP keeps the
+// burst pitch-agnostic — a pick transient is percussive, its pitch does not
+// matter (§12). Gated by the DRY level (a present dry already IS the
+// zero-latency attack; this serves wet-only presets) and by ATTACK (a click
+// would defeat a deliberate swell). Constants are ears-first starting points.
+static constexpr float BURST_HP_HZ = 1800.0f;   // click passband
+static constexpr float BURST_MS    = 12.0f;     // 90 % decay of the burst
+static constexpr float BURST_GAIN  = 1.6f;      // level vs the wet it fronts
 
 // ── Freeze + Gliss ───────────────────────────────────────────────────────────
 // The pedal's position sets the glide rate, "the closer the pedal is to the toe
@@ -204,6 +392,11 @@ static constexpr float FRZ_GLIDE_MAX_MS = 2000.0f;
 // Swapping the ring between live and loop is a hard cut; every hard switch in
 // this engine has clicked, so it is crossfaded like all the others.
 static constexpr float FRZ_XFADE_MS = 25.0f;
+// §31 gesture: a heel touch SHORTER than this re-captures + glides (octaves stay
+// frozen); a heel hold LONGER unfreezes (octaves go live). Lets you slide from
+// one frozen note to the next without the return-to-heel resetting everything —
+// the capture reads a DEDICATED always-live buffer, not the shared ring.
+static constexpr float FRZ_UNFREEZE_MS = 150.0f;
 // Filter coefficients are refreshed on this stride while the sweep moves.
 // Per-sample would mean transcendentals per sample per channel; 16 samples is
 // a 3 kHz control rate at 48k, far above anything a filter sweep resolves.
@@ -219,10 +412,22 @@ struct PoggedDsp {
     StreamShifter sh[N_VOICES];
     bool          sh_live[N_VOICES] = {};   // false ⇒ needs reset before reuse
 #ifndef POGGED_NO_VOCODER
-    StreamVocoder pv[N_VOICES];
+    PoggedVocoder pv[N_VOICES];      // up voices + dry-detune use these
+    SubVocoder    pv_sub[2];         // §27: V_SUB1, V_SUB2 — OS=4, bare
+#ifndef POGGED_PV_N
+    OctaveAnchor<> anc[2];           // §28: octave-lock anchor for V_SUB1/2
+    float          anc_out[2] = {};  // this sample's anchor value, per sub voice
+#endif
     bool          pv_live[N_VOICES] = {};
 #endif
     float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
+    int           hyb_hold = 0;             // §30: samples left holding granular
+    bool          voc_frozen = false;       // §37: vocoder spectrum currently held
+    int           sust_wait  = 0;           // §37: settle countdown before freezing
+#ifdef POGGED_DYN_FOCUS
+    SubVocoder    pv_fund;                  // §37b: unity voice held with the sustain,
+    float         g_fund = 0.0f;            //       so the PLAYED octave sustains too
+#endif
 
     // Voices are panned before the mix, so the wet bus is stereo by the time
     // it reaches the filter — hence one filter per channel, same coefficients.
@@ -230,6 +435,15 @@ struct PoggedDsp {
     Biquad        vfilt[N_VOICES];   // fixed per-voice tone shaping (voicing)
     Envelope      env;
     OnsetDetector det;
+#ifdef POGGED_DYN_FOCUS
+    // §30: the hybrid's engine switch needs its OWN onset detector, at a fixed
+    // high sensitivity — the swell's detector (keyed to attack_sens) has too
+    // high a threshold to catch a RE-PLUCK over a still-ringing note (measured:
+    // it fired once on 8 eighth-note re-plucks), so only the first attack got
+    // the granular snap and every note after felt like the vocoder. This one
+    // fires on each re-pluck (8/8) without spuriously triggering on a held note.
+    OnsetDetector hyb_det;
+#endif
     // Filter sweep: its own envelope and its own onset detector, because the
     // POG3 gives the sweep a Trigger Sensitivity separate from the ATTACK
     // slider's — the two effects can key off different playing dynamics.
@@ -248,8 +462,17 @@ struct PoggedDsp {
     float det_phase = 0.0f;
     float g_warp_st = 0.0f;   // smoothed Warp bend, in semitones
     FreezeLoop    frz;
-    bool          frz_held = false;   // pedal off the heel on the last block
     float         g_frz    = 0.0f;    // live -> loop crossfade, 0..1
+    // §31: dedicated always-live history for freeze capture (never the loop),
+    // so a new note can be captured WITHOUT unfreezing — the fix for "return to
+    // heel resets everything". Plus the latched engage state and heel timer.
+    std::vector<float> frz_live;
+    uint32_t frz_live_mask = 0;
+    uint64_t frz_live_wpos = 0;
+    bool     frz_engaged   = false;   // octaves currently held (latched)
+    bool     frz_at_heel   = true;    // pedal at heel on the last block
+    int      frz_heel_smp  = 0;       // samples spent at heel since leaving off
+    bool     frz_recap     = false;   // §38: a new FreezeLoop capture this block
     // Detune-mix coefficient, ramped 0 → 0.5 so enabling/disabling detune
     // crossfades the (phase-independent) detuned voice in instead of hard-
     // switching to the 50/50 average, which was an audible click.
@@ -284,6 +507,11 @@ struct PoggedDsp {
     float env_level   = 0.0f;
     int   pending_trig = 0;       // duck-then-swell: samples until trigger()
     int   sil_count    = 0;       // samples of near-silence (release gate)
+
+    // Transient reinjection state (§18)
+    Biquad burst_hp;              // input HP, always warm
+    float  burst_env = 0.0f;      // per-onset decaying envelope
+    float  g_burst   = 0.0f;      // smoothed enable (dry/ATTACK gates)
 };
 
 // Size each sub voice's grain and correlation scan from the note IT emits.
@@ -306,6 +534,31 @@ static void setup_subs(PoggedDsp* p, float f_low, float sr) noexcept
     }
 }
 
+// §34: size the UP voices' grains from the range, mirroring setup_subs. With
+// GRAIN_UP_PERIODS == 0 every up voice keeps the fixed GRAIN_UP grain (old
+// behaviour); otherwise a voice whose lowest output at this range would underrun
+// GRAIN_UP_PERIODS periods gets a proportionally longer grain, so the aligner
+// always has a full cycle to lock onto. Floored at the fixed grain so the high
+// notes (short output period) stay tight and low-latency. Called from _new and
+// on every range change, like setup_subs.
+static void setup_ups(PoggedDsp* p, float f_low, float sr) noexcept
+{
+    const int   grain_up = (int)(0.001f * GRAIN_UP_MS_C * sr);
+    const int   align    = (int)(0.010f * sr);          // 10 ms correlation scan
+    const Voice v[5]     = { V_UP5, V_UP1, V_UP2, V_UP1D, V_UP2D };
+    const float rat[5]   = { FIFTH_RATIO, 2.0f, 4.0f, 2.0f, 4.0f };
+    for (int i = 0; i < 5; ++i) {
+        int grain = grain_up;
+        if (GRAIN_UP_PERIODS > 0.0f) {
+            const float period_ms = 1000.0f / (rat[i] * f_low);   // lowest output
+            const int g_per = (int)(0.001f * std::min(GRAIN_UP_PERIODS * period_ms,
+                                                      GRAIN_MAX_MS) * sr);
+            grain = std::max(grain_up, g_per);
+        }
+        p->sh[v[i]].setup(rat[i], grain, align);
+    }
+}
+
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 PoggedDsp* pogged_dsp_new(double sample_rate)
 {
@@ -319,7 +572,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     p->mask = len - 1;
 
     const float sr = (float)sample_rate;
-    const int grain_up  = (int)(0.025f * sr);   // 25 ms — low lag, POG shimmer
+    const int grain_up  = (int)(0.001f * GRAIN_UP_MS_C * sr);  // POG shimmer/lag
     const int align     = (int)(0.010f * sr);   // 10 ms correlation scan
 
     // Aligned respawn everywhere: without it the source-position jump at
@@ -328,12 +581,9 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     // so alternate grains cancel the target pitch outright. Correlation
     // alignment (SOLA-style) keeps grains phase-coherent for any input.
     setup_subs(p, range_f_low(0.0f), sr);      // guitar until told otherwise
-    p->sh[V_UP5 ].setup(FIFTH_RATIO, grain_up, align);
-    p->sh[V_UP1 ].setup(2.0f,  grain_up,  align);
-    p->sh[V_UP2 ].setup(4.0f,  grain_up,  align);
-    p->sh[V_UP1D].setup(2.0f,  grain_up,  align);
-    p->sh[V_UP2D].setup(4.0f,  grain_up,  align);
-    // Detuned dry sits at unison; the LFO moves it around 1.0.
+    setup_ups (p, range_f_low(0.0f), sr);      // §34: up grains sized from range
+    // Detuned dry sits at unison (ratio 1 → no splice warble), so it keeps the
+    // plain fixed grain regardless of GRAIN_UP_PERIODS.
     p->sh[V_DRYD].setup(1.0f,  grain_up,  align);
 
     // Fixed per-voice tone shaping — voices the octaves toward the POG2's
@@ -371,14 +621,103 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
     // in any given audio block, instead of all N_VOICES colliding every HOP
     // samples. Same work, same sound — it is only *when* each voice computes.
     for (int v = 0; v < N_VOICES; ++v) {
-        p->pv[v].init(sample_rate, v * (StreamVocoder::HOP / N_VOICES));
+        // §27: DOWN voices on the bare OS=4 SubVocoder (see the type alias).
+        if (v == V_SUB1 || v == V_SUB2) {
+            p->pv_sub[v].init(sample_rate, v * (SubVocoder::HOP / N_VOICES));
+            p->pv_sub[v].set_ratio(VOICE_RATIO[v]);
+#ifdef POGGED_DYN_FOCUS
+            p->pv_sub[v].set_hold_release(SUSTAIN_REL_MS);   // §37 init default
+#endif
+#ifndef POGGED_PV_N
+            p->pv_sub[v].prony(false, false);   // bare, like 351591f — no §22
+#if defined(POGGED_DYN_FOCUS) && !defined(POGGED_SUB_SPLIT)
+            // §30 CPU: under the hybrid the GRANULAR engine renders the sub's
+            // attack, so its vocoder only carries the sustained body — it no
+            // longer needs the short (2048) window for attack tightness. Drop
+            // it to long-only (1 FFT instead of 2), same §29 logic as the up
+            // voices, and cleaner in the bass too. -DPOGGED_SUB_SPLIT keeps the
+            // two-window split (for A/B).
+            p->pv_sub[v].long_only(true);
+#endif
+            // §28: octave-lock anchor (resynthesised harmonic series on the
+            // shifted fundamental) sits UNDER the raw sub to stop the octave
+            // wandering when the input fundamental is weak.
+            p->anc[v].init(sample_rate, VOICE_RATIO[v]);
+#endif
+            continue;
+        }
+        p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
         p->pv[v].set_ratio(VOICE_RATIO[v]);
+#ifdef POGGED_DYN_FOCUS
+        p->pv[v].set_hold_release(SUSTAIN_REL_MS);           // §37 init default
+#endif
+#ifndef POGGED_PV_N
+        // §29: the UP-shift voices render from the LONG window only. The §20
+        // trade (fixed low crossover, short window rendering input partials it
+        // cannot resolve) was the source of the "bass confusion" the user heard
+        // on the +1 voice — low notes/chords have densely-spaced input partials
+        // whose harmonics reach >XOVER output and got routed to the 23 Hz-bin
+        // short window. Measured on the user's own take: bass harmonicity 0.77
+        // -> 0.86 long-only, treble unchanged (~1.0); confirmed by ear. The
+        // short window only bought attack tightness, secondary in the bass per
+        // the user. V_DRYD (unity, a unison detune) has no shift and keeps the
+        // low-latency split. See MultiVocoder::long_only.
+#ifndef POGGED_UP_LONGONLY_OFF
+        if (VOICE_RATIO[v] > 1.05f) p->pv[v].long_only(true);
+#endif
+        // Output-side crossover, used only by V_DRYD now (the split path).
+        p->pv[v].set_xover(VOC_XOVER_OUT);
+        // §20 frequency smoothing: LONG window only. Measured on the full
+        // engine: smoothing the short window is stable-but-MISTUNED on its
+        // merged pairs, and that beats against the long window's correct
+        // rendering through the crossover skirt — worse than the wobble it
+        // removes. The long window's smoothing is free of that (its pairs
+        // are at least partially resolved) and cleans the crossover band
+        // (34 Hz pair: 37.7 -> 27.6 dB AM).
+        p->pv[v].tune(0.20f, 1.0f);
+        // §24/§25: the long window's §22 below 160 Hz is gated OFF at the
+        // default 250 crossover — the fundamental pair is AT the crossover
+        // edge there and §22's frequency wobble leaks through the LP as the
+        // midpoint parasite. Under §25 (XBAND, crossover 600) the pair is deep
+        // in the long window's passband, no longer at the edge, so §22 engages
+        // and resolves the 249 midpoint (measured -8.7 -> -28 dB). See the
+        // VOC_PRONY_FMIN definition for the two configs.
+        p->pv[v].prony_fmin(VOC_PRONY_FMIN);
+        // §26 (the sub input-peak cap) is RETIRED: measured on the user's own
+        // signal it removed the F# fold but SMEARED the attack (73 -> 104-170
+        // ms rise), because the attack transient is broadband and the cap ate
+        // its high-frequency snap. The sub's clarity mattered more; the F# on
+        // a sustained chord will be handled by tonal/noise separation (§27
+        // piste 3) without touching attacks. The DOWN voices now use pv_sub.
+#endif
     }
 #endif
 
+#ifdef POGGED_DYN_FOCUS
+    // §37b: the held unison. Renders the note at the PLAYED octave (ratio 1) so
+    // the sustain holds the fundamental too, not just the transposed voices. Long
+    // window only (its latency is free on a held note) and it only SOUNDS while
+    // frozen — during play the live dry carries the fundamental, so no doubling.
+    p->pv_fund.init(sample_rate, 0);
+    p->pv_fund.set_ratio(1.0f);
+    p->pv_fund.long_only(true);
+    p->pv_fund.set_hold_release(SUSTAIN_REL_MS);
+#endif
+
     p->frz.init(sample_rate);
+    {
+        const uint32_t fl = std::clamp(next_pow2((uint32_t)(0.5 * sample_rate)),
+                                       16384u, 65536u);
+        p->frz_live.assign(fl, 0.0f);
+        p->frz_live_mask = fl - 1;
+        p->frz_live_wpos = fl;
+    }
     p->det.init(sr);
+#ifdef POGGED_DYN_FOCUS
+    p->hyb_det.init(sr);
+#endif
     p->filt_det.init(sr);
+    p->burst_hp.setup(Biquad::HP, std::min(BURST_HP_HZ, ny), 0.707f, sr);
     pogged_dsp_reset(p);
     return p;
 }
@@ -397,15 +736,30 @@ void pogged_dsp_reset(PoggedDsp* p)
         p->vfilt[v].reset();
         p->sh_live[v] = false;
 #ifndef POGGED_NO_VOCODER
-        p->pv[v].reset();
+        if (v == V_SUB1 || v == V_SUB2) {
+            p->pv_sub[v].reset();
+#ifndef POGGED_PV_N
+            p->anc[v].reset();
+#endif
+        } else p->pv[v].reset();
         p->pv_live[v] = false;
 #endif
     }
     p->g_focus = 0.0f;
+    p->hyb_hold = 0;
+    p->voc_frozen = false;              // §37: pv/pv_sub reset() cleared their hold
+    p->sust_wait  = 0;
+#ifdef POGGED_DYN_FOCUS
+    p->pv_fund.reset();
+    p->g_fund = 0.0f;
+#endif
     p->filter_l.reset();
     p->filter_r.reset();
     p->env.reset();
     p->det.reset();
+#ifdef POGGED_DYN_FOCUS
+    p->hyb_det.reset();
+#endif
     p->filt_env.reset();
     p->filt_det.reset();
     p->filt_env_level = 0.0f;
@@ -417,13 +771,20 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->env_level     = 0.0f;
     p->pending_trig  = 0;
     p->sil_count     = 0;
+    p->burst_hp.reset();
+    p->burst_env     = 0.0f;
+    p->g_burst       = 0.0f;
     p->g_detmix      = 0.0f;
     p->g_filtmix     = 0.0f;
     p->det_phase     = 0.0f;
     p->g_warp_st     = 0.0f;
     p->frz.reset();
-    p->frz_held      = false;
     p->g_frz         = 0.0f;
+    std::fill(p->frz_live.begin(), p->frz_live.end(), 0.0f);
+    p->frz_live_wpos = p->frz_live.size();
+    p->frz_engaged   = false;
+    p->frz_at_heel   = true;
+    p->frz_heel_smp  = 0;
     p->p_dry = p->p_sub1 = p->p_sub2 = 0.0f;
     p->p_up5 = p->p_up1 = p->p_up2 = 0.0f;
     p->g_spread = 0.0f;
@@ -478,12 +839,57 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float dryfilt_t = (p_->dry_filter > 0.5f) ? 1.0f : 0.0f;
     const float drydet_t  = (p_->dry_detune > 0.5f) ? 1.0f : 0.0f;
 
-    const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
+    // Engine crossfade time constant. Manual mode changes (turning Focus) use
+    // this slow ramp; the hybrid's per-onset dynamics use the fast ones below.
     const float focus_c = 1.0f - std::exp(-1.0f / (FOCUS_XFADE_MS * 0.001f * sr));
+#ifdef POGGED_DYN_FOCUS
+    // §30: Focus becomes a 3-way engine SELECTOR (0 granular, 1 vocoder, 2
+    // hybrid). The static crossfade still drives modes 0/1; mode 2 is the
+    // onset-driven hold/rise/fall (granular attack, vocoder body).
+    const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
+    const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
+    // §37 sustain (runtime): ONE control carries both on/off and the release.
+    // 0 = off; > 0 = on with that release (floored at 200 ms); the max = infinite
+    // (release 0 = drone, holds until the next attack).
+    const float sustain_val = std::clamp(p_->sustain, 0.0f, SUSTAIN_MAX_MS);
+    const bool  sustain_on  = sustain_val > 0.5f;
+    const int   sust_delay_n = (int)(SUSTAIN_SETTLE_MS * 0.001f * sr);
+#ifdef POGGED_FREEZE_SMOOTH
+    // §38: the manual FREEZE, smoothed — it drives the SAME spectral hold as the
+    // sustain, so the frozen octaves stop re-analysing the loop (which repeats at
+    // the loop rate) and instead hold their spectrum smoothly. FREEZE holds
+    // INDEFINITELY (its functioning), so an infinite release when it is engaged.
+    const bool frz_smooth = p->frz_engaged;
+#else
+    const bool frz_smooth = false;
+#endif
+    if (frz_smooth) {
+        for (int v = 0; v < N_VOICES; ++v) {
+            if (v == V_DRYD) continue;
+            if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_hold_release(0.0f);
+            else                            p->pv[v].set_hold_release(0.0f);
+        }
+    } else if (sustain_on) {
+        const float sms = std::max(200.0f, sustain_val);
+        const float rel = (sms >= SUSTAIN_MAX_MS) ? 0.0f : sms;   // max = infinite
+        for (int v = 0; v < N_VOICES; ++v) {
+            if (v == V_DRYD) continue;
+            if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_hold_release(rel);
+            else                            p->pv[v].set_hold_release(rel);
+        }
+        p->pv_fund.set_hold_release(rel);
+    }
+    // §35: are we in the hybrid engine mode this block? Used to key the ATTACK
+    // swell to the granular's own onset (see the swell block below).
+    [[maybe_unused]] const bool hyb_mode = std::clamp(p_->focus, 0.0f, 2.0f) >= 1.5f;
+#else
+    const float focus_t = (std::clamp(p_->focus, 0.0f, 1.0f) > 0.5f) ? 1.0f : 0.0f;
+#endif
 
     const float range_t = std::clamp(p_->range_mode, 0.0f, 2.0f);
     if (range_t != p->cached_range) {
         setup_subs(p, range_f_low(range_t), sr);
+        setup_ups (p, range_f_low(range_t), sr);   // §34: up grains follow range
         p->cached_range = range_t;
     }
 
@@ -512,7 +918,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->sh[v].set_lag_ratio(r);
         p->sh[v].set_ratio(r);
 #ifndef POGGED_NO_VOCODER
-        p->pv[v].set_ratio(r);              // no lag budget: it translates peaks
+        if (v == V_SUB1 || v == V_SUB2) {
+            p->pv_sub[v].set_ratio(r);
+#ifndef POGGED_PV_N
+            p->anc[v].set_ratio(r);
+#endif
+        } else p->pv[v].set_ratio(r);   // translates peaks
 #endif
     }
 
@@ -543,22 +954,34 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 #endif
     }
 
-    // ── Freeze + Gliss ────────────────────────────────────────────────────
-    // Capturing on the pedal LEAVING the heel is what makes this work at all:
-    // at that instant the ring still holds the live input, because the ring is
-    // only fed the loop while frozen. Coming back to the heel refills it with
-    // whatever is being played, so the next rise captures the next note — which
-    // is exactly the pedal move the manual describes.
+    // ── Freeze + Gliss (§31) ──────────────────────────────────────────────
+    // Capture from a DEDICATED always-live buffer, so the octaves never have to
+    // go live to grab a new note (the shared ring holds the LOOP while frozen,
+    // which is why the old return-to-heel capture "reset everything"). A heel
+    // touch shorter than FRZ_UNFREEZE_MS re-captures the current live note and
+    // GLIDES to it while the octaves stay frozen; a longer heel hold unfreezes
+    // (goes live). Every heel→off transition (and the first engage from live)
+    // captures — the FreezeLoop glides on all but the first (nothing to glide
+    // from). The pedal position at capture sets the glide rate (20 ms → 2 s).
     const float frz_t  = std::clamp(p_->freeze, 0.0f, 1.0f);
-    const bool  frz_on = frz_t > 1e-3f;
-    if (frz_on && !p->frz_held) {
-        const float glide_ms = FRZ_GLIDE_MIN_MS
-                             + frz_t * (FRZ_GLIDE_MAX_MS - FRZ_GLIDE_MIN_MS);
-        p->frz.capture(p->ring.data(), p->mask, p->wpos,
-                       (int)(glide_ms * 0.001f * sr));
+    const bool at_heel = frz_t <= 1e-3f;
+    if (at_heel) {
+        p->frz_heel_smp += (int)n_samples;
+        if (p->frz_heel_smp >= (int)(FRZ_UNFREEZE_MS * 0.001f * sr))
+            p->frz_engaged = false;
+    } else {
+        if (p->frz_at_heel || !p->frz_engaged) {
+            const float glide_ms = FRZ_GLIDE_MIN_MS
+                                 + frz_t * (FRZ_GLIDE_MAX_MS - FRZ_GLIDE_MIN_MS);
+            p->frz.capture(p->frz_live.data(), p->frz_live_mask, p->frz_live_wpos,
+                           (int)(glide_ms * 0.001f * sr));
+            p->frz_engaged = true;
+            p->frz_recap   = true;   // §38: re-arm the smooth-freeze settle
+        }
+        p->frz_heel_smp = 0;
     }
-    p->frz_held = frz_on;
-    const float frz_target = (frz_on && p->frz.armed()) ? 1.0f : 0.0f;
+    p->frz_at_heel = at_heel;
+    const float frz_target = (p->frz_engaged && p->frz.armed()) ? 1.0f : 0.0f;
     const float frz_c = 1.0f - std::exp(-1.0f / (FRZ_XFADE_MS * 0.001f * sr));
 
     // Which shifters run this block. A voice is live while its target OR its
@@ -586,7 +1009,12 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             p->sdl[v].reset();   // else SPREAD replays audio from before the
                                  // voice was silenced (no-op if uninitialised)
 #ifndef POGGED_NO_VOCODER
-            p->pv[v].reset();    // same: stale OLA tail from the last note
+            if (v == V_SUB1 || v == V_SUB2) {
+                p->pv_sub[v].reset();
+#ifndef POGGED_PV_N
+                p->anc[v].reset();
+#endif
+            } else p->pv[v].reset();   // stale OLA tail
 #endif
         }
         p->sh_live[v] = act[v];
@@ -594,6 +1022,18 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 
     // ── Attack envelope (A-only ADSR: decay 0, sustain 1) ─────────────────
     p->env.set(atk_ms, 0.0f, 1.0f, 60.0f, sr);
+#ifndef POGGED_NO_VOCODER
+    // The vocoder swells PER BIN instead of taking the global envelope: each
+    // attack fades in on its own bins while the notes already ringing keep
+    // their sustain (the POG3 ATTACK behaviour — see stream_vocoder.hpp).
+    // V_DRYD is excluded: it feeds the DRY path, whose swell is the DRY
+    // ATTACK button (the global envelope lerp below), not the wet envelope.
+    for (int v = 0; v < N_VOICES; ++v) {
+        const float sw = (env_on && v != V_DRYD) ? atk_ms : 0.0f;
+        if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_swell(sw);
+        else                            p->pv[v].set_swell(sw);
+    }
+#endif
     // Filter sweep envelope: AD (sustain 0) — it rises on the pick then falls
     // back to the slider's frequency, which is what a filter sweep is.
     p->filt_env.set(fenv_a, fenv_dc, 0.0f, 60.0f, sr);
@@ -627,6 +1067,8 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 
     // Per-sample gain smoothing coefficient (~30 ms)
     const float gc = 1.0f - std::exp(-1.0f / (0.030f * sr));
+    // Burst envelope decay: 90 % gone in BURST_MS (§18).
+    const float burst_c = std::exp(-std::log(9.0f) / (BURST_MS * 0.001f * sr));
 
     float*   ring = p->ring.data();
     const uint32_t mask = p->mask;
@@ -638,6 +1080,11 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // exactly as they would on the pedal.
         p->g_in += gc * (in_t - p->g_in);
         const float x = in[i] * p->g_in;
+
+        // §31: the dedicated freeze buffer always records the LIVE input, even
+        // while frozen — so capture() can grab a new note without unfreezing.
+        p->frz_live[p->frz_live_wpos & p->frz_live_mask] = x;
+        ++p->frz_live_wpos;
 
         // Freeze feeds the ring the loop instead of the input. Every voice and
         // both engines read the ring exactly as before and never learn that
@@ -652,6 +1099,19 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // Write first: voices read at least MARGIN samples behind wpos.
         ring[p->wpos & mask] = src;
         ++p->wpos;
+
+#ifndef POGGED_NO_VOCODER
+#ifndef POGGED_PV_N
+        // §28: advance the octave-lock anchors on every input sample (their
+        // analysis must stay continuous even when a sub voice is momentarily
+        // silent); voice_raw mixes the result under the raw sub. Guarded so the
+        // whole anchor cost folds away when ANCHOR_MIX is the default 0.
+        if (ANCHOR_MIX > 0.0f) {
+            p->anc_out[0] = p->anc[0].process(src);
+            p->anc_out[1] = p->anc[1].process(src);
+        }
+#endif
+#endif
 
         p->g_dry  += gc * (dry_t  - p->g_dry);
         p->g_sub1 += gc * (sub1_t - p->g_sub1);
@@ -670,19 +1130,173 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->p_up1  += gc * (pup1_t  - p->p_up1);
         p->p_up2  += gc * (pup2_t  - p->p_up2);
 
+        // Attack/swell. The detector always runs so its RMS state is warm
+        // when the user raises attack_ms mid-note. Computed BEFORE the voices
+        // because the granular engine takes the envelope at its input: the
+        // vocoder swells per bin on its own (see set_swell above), so a
+        // global multiply on the mixed wet bus would double-swell it.
+        const bool onset = p->det.process(x, sens);
+#ifdef POGGED_DYN_FOCUS
+        // §30: the hybrid's dedicated onset (fires on every re-pluck).
+        const bool hyb_onset = p->hyb_det.process(x, HYB_ONSET_SENS);
+#endif
+        // §35: what re-triggers the ATTACK swell. Normally the swell's own
+        // detector (`det`, keyed to attack_sens). In hybrid the GRANULAR renders
+        // the attack and swells only via the global env — but `det` is far less
+        // sensitive than the hybrid's hyb_det (0.88), so the granular took over
+        // on every re-pluck while the swell did NOT re-trigger, and ATTACK felt
+        // dead in hybrid. Key the swell to the SAME onset that drives the
+        // granular takeover, so the granular swells on every pluck like the
+        // vocoder's per-bin swell. hyb_det is only READ — the §30 fix is intact.
+        bool swell_trig = onset;
+#if defined(POGGED_DYN_FOCUS) && defined(POGGED_HYB_SWELL)
+        if (hyb_mode && hyb_onset) swell_trig = true;
+#endif
+        if (env_on) {
+            if (swell_trig) {
+                if (p->env.is_active() && p->env_level > 0.1f) {
+                    // Re-pick during a swell: duck fast, then restart the
+                    // attack from low — every pick re-swells without a click.
+                    p->env.release_capped(5.0f, sr);
+                    p->pending_trig = (int)(0.005f * sr) + 1;
+                } else {
+                    p->env.trigger();
+                }
+            }
+            if (p->pending_trig > 0 && --p->pending_trig == 0)
+                p->env.trigger();
+            // Safety net: signal present but the envelope sits at Idle
+            // (missed onset on a legato swell, or attack enabled mid-note)
+            // — swell in rather than staying silent.
+            if (!p->env.is_active() && p->det.fast_power() > 4.0f * SIL_GATE)
+                p->env.trigger();
+            if (p->det.fast_power() < SIL_GATE) {
+                if (++p->sil_count == sil_max) p->env.release();
+            } else {
+                p->sil_count = 0;
+            }
+            p->env_level = p->env.process();
+        } else {
+            p->env_level = 1.0f;
+        }
+
         // FOCUS crossfade. Both engines run ONLY while the fade is in flight;
         // at rest (g_focus pinned at 0 or 1) exactly one does, so the idle cost
         // is one engine. The vocoder's OLA needs ~N samples to fill, which the
         // 150 ms fade covers — it ramps in from silence rather than clicking.
+#ifdef POGGED_DYN_FOCUS
+        // §30: Focus is a 3-way selector — 0 granular, 1 vocoder, 2 hybrid.
+        //   modes 0/1: fixed target, slow manual crossfade (focus_c);
+        //   mode 2 (hybrid): hold granular (0) for HYB_HOLD after each onset
+        //   (covering the vocoder's latency), then switch to vocoder (1) over
+        //   the short HYB_RISE; fall back fast-but-smooth on the next onset.
+        const float fsel = std::clamp(p_->focus, 0.0f, 2.0f);
+        float hyb_target, hyb_coef;
+        if (fsel < 0.5f) {                     // 0 = granular only
+            hyb_target = 0.0f; hyb_coef = focus_c;
+        } else if (fsel < 1.5f) {              // 1 = vocoder only
+            hyb_target = 1.0f; hyb_coef = focus_c;
+        } else {                               // 2 = hybrid (onset-driven)
+            // SNAP to granular on the onset sample itself — a smoothed fall
+            // would ramp the granular gain up over its first few ms and soften
+            // the very pluck transient that makes the attack feel instant. The
+            // onset's own broadband transient masks the step on notes still
+            // ringing. Then hold granular through the vocoder's latency and
+            // rise to the vocoder body over the short HYB_RISE.
+            if (hyb_onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f; }
+            hyb_target = (p->hyb_hold > 0) ? 0.0f : (1.0f - HYB_FLOOR);
+            if (p->hyb_hold > 0) --p->hyb_hold;
+            hyb_coef = hyb_rise_c;
+        }
+        p->g_focus += hyb_coef * (hyb_target - p->g_focus);
+
+        // §37 infinite sustain — runs in Vocoder (fsel in [0.5,1.5)) AND Hybrid
+        // (>=1.5) Focus, gated at run time by the `sustain` port. On each attack
+        // recapture (restart the settle countdown); once it elapses — the body
+        // has settled past the vocoder latency — freeze (§36) and HOLD until the
+        // next attack. Never while the manual FREEZE (§31) is engaged: the two
+        // holds are independent. Not in granular Focus (no vocoder to freeze).
+        // Edge-triggered: hold() is set per voice only on the transition.
+        bool want_frozen = false;
+#ifdef POGGED_FREEZE_SMOOTH
+        // §38: the manual FREEZE, smoothed. Same spectral hold as the sustain but
+        // keyed to the freeze pedal: hold the vocoder instead of re-analysing the
+        // loop. Each new capture (initial freeze OR a glide) re-arms the settle so
+        // the glide's new note is re-captured — the gesture is unchanged, only the
+        // held SOUND is smoother. Only in Vocoder/Hybrid Focus (granular keeps the
+        // loop). Mutually exclusive with the sustain branch (frz_engaged).
+        if (frz_smooth && fsel >= 0.5f) {
+            if (p->frz_recap)          { p->sust_wait = sust_delay_n; p->frz_recap = false; }
+            else if (p->sust_wait > 0) --p->sust_wait;
+            want_frozen = (p->sust_wait == 0);
+        } else
+#endif
+        if (sustain_on && fsel >= 0.5f && !p->frz_engaged) {
+            if (hyb_onset)             p->sust_wait = sust_delay_n;   // new note
+            else if (p->sust_wait > 0) --p->sust_wait;
+            want_frozen = (p->sust_wait == 0);
+        }
+        if (want_frozen != p->voc_frozen) {
+            for (int vv = 0; vv < N_VOICES; ++vv) {
+                if (vv == V_DRYD) continue;
+                if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(want_frozen);
+                else                              p->pv[vv].hold(want_frozen);
+            }
+            p->pv_fund.hold(want_frozen);   // §37b: the held unison
+            p->voc_frozen = want_frozen;
+        }
+#else
         p->g_focus += focus_c * (focus_t - p->g_focus);
+#endif
         const float fx = p->g_focus;
+#ifdef POGGED_DYN_FOCUS
+        // §30: equal-power crossfade — the granular and vocoder renderings are
+        // phase-incoherent, so a linear fade would dip up to -3 dB mid-cross.
+        float g_gran = std::sqrt(std::max(0.0f, 1.0f - fx));
+        float g_voc  = std::sqrt(std::max(0.0f, fx));
+        // §37: while a note is held, the sustain is PURE vocoder — no granular at
+        // all (its splice warble must not colour the held body). voc_frozen is
+        // only ever true when the sustain is engaged.
+        if (p->voc_frozen) { g_gran = 0.0f; g_voc = 1.0f; }
+#else
+        [[maybe_unused]] const float g_gran = 1.0f - fx;   // unused in NO_VOCODER
+        [[maybe_unused]] const float g_voc  = fx;
+#endif
+        // The wet swell per engine: granular takes the global envelope (a
+        // POG2-style duck-and-reswell on every onset), the vocoder swells per
+        // bin inside _process_frame. V_DRYD belongs to the DRY path and takes
+        // neither — its swell is the DRY ATTACK lerp further down.
         auto voice_raw = [&](Voice v) noexcept -> float {
+            const float ge = (env_on && v != V_DRYD) ? p->env_level : 1.0f;
 #ifdef POGGED_NO_VOCODER
-            return p->sh[v].process(ring, mask, p->wpos);
+            return ge * p->sh[v].process(ring, mask, p->wpos);
 #else
             float s = 0.0f;
-            if (fx < 0.9999f) s += (1.0f - fx) * p->sh[v].process(ring, mask, p->wpos);
-            if (fx > 1e-4f)   s += fx * p->pv[v].process(ring, mask, p->wpos);
+#ifdef POGGED_DYN_FOCUS
+            // §30: g_focus alternates every onset, so BOTH engines must be
+            // advanced every sample — skipping one freezes its streaming state
+            // (OLA / grain taps) and clicks when it resumes. Gain may be 0; the
+            // call must not be.
+            constexpr bool always = true;
+#else
+            // Static Focus rests at 0 or 1, so exactly one engine runs at rest.
+            constexpr bool always = false;
+#endif
+            if (always || g_gran > 1e-4f) s += g_gran * ge * p->sh[v].process(ring, mask, p->wpos);
+            if (always || g_voc > 1e-4f) {
+                float w;
+                if (v == V_SUB1 || v == V_SUB2) {
+                    w = p->pv_sub[v].process(ring, mask, p->wpos);
+#ifndef POGGED_PV_N
+                    // §28: octave-lock anchor under the raw sub (ge so it swells
+                    // with the note like the wet, gated by the vocoder mix fx).
+                    w += ge * ANCHOR_MIX * p->anc_out[v];
+#endif
+                } else {
+                    w = p->pv[v].process(ring, mask, p->wpos);
+                }
+                s += g_voc * w;
+            }
             return s;
 #endif
         };
@@ -746,6 +1360,44 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             spread_mix(V_UP2, o, p->p_up2);
         }
 
+#ifdef POGGED_DYN_FOCUS
+        // §37b: the held unison, so the PLAYED octave sustains with the rest. It
+        // only SOUNDS while frozen (gain ramps to the DRY level) — during play the
+        // live dry carries the fundamental, so nothing doubles. Run it only while
+        // the sustain is on (or still ramping out after it was switched off), so
+        // it costs nothing when the feature is idle.
+        if (sustain_on || p->g_fund > 1e-4f) {
+            const float fund = p->pv_fund.process(ring, mask, p->wpos);
+            const float ftgt = (sustain_on && p->voc_frozen) ? dry_t : 0.0f;
+            p->g_fund += gc * (ftgt - p->g_fund);
+            wet_l += p->g_fund * fund;
+            wet_r += p->g_fund * fund;
+        }
+#endif
+
+        // ── Transient reinjection (§18) ───────────────────────────────────
+        // The HP always runs so it is warm when a burst fires. The gate
+        // fades with the dry level (dry present = the attack already exists
+        // at zero latency), with ATTACK (a click would defeat the swell),
+        // and scales with the wet voices actually mixed in.
+        {
+            const float hpx = p->burst_hp.process(x);
+            if (onset) p->burst_env = 1.0f;
+            else       p->burst_env *= burst_c;
+            // §18 burst is a 1800 Hz+ pick snap — it tightens the PITCHED (up)
+            // voices' attack, but on the smooth low-passed subs it lands as an
+            // out-of-place tick ("pic de saturation"), and the subs get their
+            // attack from the granular engine anyway. So scale it by the UP
+            // voices only, not the subs.
+            const float wet_sum = std::min(1.0f, p->g_up5 + p->g_up1 + p->g_up2);
+            const float tgt = (env_on ? 0.0f : 1.0f) *
+                              std::max(0.0f, 1.0f - p->g_dry) * wet_sum;
+            p->g_burst += gc * (tgt - p->g_burst);
+            const float b = BURST_GAIN * p->g_burst * p->burst_env * hpx;
+            wet_l += b;
+            wet_r += b;
+        }
+
         // ── Dry path (POG3 DRY buttons) ──────────────────────────────────
         // Chain order follows the POG2's own cycle (Attack, then LP Filter,
         // then Detune are added in turn), so: detune -> attack -> filter.
@@ -774,39 +1426,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             dr_dry = d + d_spread * (p->sdl_dry.read(dr_s) - d);
         }
 
-        // Attack/swell. The detector always runs so its RMS state is warm
-        // when the user raises attack_ms mid-note.
-        const bool onset = p->det.process(x, sens);
-        if (env_on) {
-            if (onset) {
-                if (p->env.is_active() && p->env_level > 0.1f) {
-                    // Re-pick during a swell: duck fast, then restart the
-                    // attack from low — every pick re-swells without a click.
-                    p->env.release_capped(5.0f, sr);
-                    p->pending_trig = (int)(0.005f * sr) + 1;
-                } else {
-                    p->env.trigger();
-                }
-            }
-            if (p->pending_trig > 0 && --p->pending_trig == 0)
-                p->env.trigger();
-            // Safety net: signal present but the envelope sits at Idle
-            // (missed onset on a legato swell, or attack enabled mid-note)
-            // — swell in rather than staying silent.
-            if (!p->env.is_active() && p->det.fast_power() > 4.0f * SIL_GATE)
-                p->env.trigger();
-            if (p->det.fast_power() < SIL_GATE) {
-                if (++p->sil_count == sil_max) p->env.release();
-            } else {
-                p->sil_count = 0;
-            }
-            p->env_level = p->env.process();
-            wet_l *= p->env_level;
-            wet_r *= p->env_level;
-        } else {
-            p->env_level = 1.0f;
-        }
         // DRY ATTACK: lerp between untouched and swelled, so the button fades.
+        // (The wet swell happened per voice in voice_raw; the envelope itself
+        // was advanced before the voices ran.)
         {
             const float e = 1.0f + p->g_dryatk * (p->env_level - 1.0f);
             dl_dry *= e; dr_dry *= e;

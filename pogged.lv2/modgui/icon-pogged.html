@@ -75,6 +75,12 @@
             <span class="pogged-fader-value" data-handle-value="attack_ms"></span>
             <span class="pogged-fader-label">ATTACK</span><button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_attack" title="Send the dry through the attack swell">DRY</button>
         </div>
+        <div class="pogged-fader" data-handle="sustain" data-min="0" data-max="5000" title="Sustain: 0 = off, up = hold/release time; top = infinite (holds until the next attack)">
+            <div class="pogged-knobs"></div>
+            <div class="pogged-lr-spacer"></div><div class="pogged-key-spacer"></div><div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
+            <span class="pogged-fader-value" data-handle-value="sustain"></span>
+            <span class="pogged-fader-label">SUSTAIN</span><div class="pogged-lamp-spacer"></div>
+        </div>
         <div class="pogged-fader pogged-fader-wide" data-handle="lp_cutoff" data-min="20" data-max="20000" data-scale="log" title="Filter frequency">
             <div class="pogged-knobs"><div class="pogged-knob" data-handle="lp_q" data-min="0.5" data-max="8" data-scale="log" title="Filter resonance"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">Q</span></div><div class="pogged-knob" data-handle="filter_env" data-min="-1" data-max="1" data-detent="0" title="Filter envelope depth (centre = off)"><div class="pogged-knob-dial"></div><span class="pogged-knob-label">ENV</span></div></div>
             <div class="pogged-lr-spacer"></div><div class="pogged-key-spacer"></div><div class="pogged-fader-track"><div class="pogged-fader-fill"></div><div class="pogged-fader-cap"></div></div>
@@ -88,15 +94,16 @@
             <span class="pogged-fader-label">DETUNE</span><button type="button" class="pogged-lamp pogged-fader-lamp" data-handle="dry_detune" title="Send the dry through the detune chorus and Spread. Costs the dry its zero latency.">DRY</button>
         </div>
 
-        <!-- FOCUS: a lamp under the voices it switches, as the pedal does.
-             The pedal's bracket spans only +1/+2 because its POG algorithm can
-             bend nothing else; ours switches EVERY voice, so it spans them all
-             — bracketing +1/+2 here would lie. -->
+        <!-- FOCUS: a 3-way engine selector under the voices it switches, as the
+             pedal does. The pedal's bracket spans only +1/+2 because its POG
+             algorithm can bend nothing else; ours switches EVERY voice, so it
+             spans them all — bracketing +1/+2 here would lie. -->
         <div class="pogged-bracket pogged-bracket-focus">
-            <button type="button" class="pogged-lamp" data-handle="focus"
-                    title="Engine: off = granular (~3 ms, the POG sound), on = phase vocoder (~85 ms, clean on chords)">FOCUS</button>
+            <div class="pogged-seg pogged-seg-focus" data-handle="focus"
+                 title="Engine: GRAN = granular (~15 ms, POG feel) · VOC = phase vocoder (~85 ms, clean on chords) · HYB = granular attack + vocoder body">
+                <div class="pogged-seg-btns"><button type="button" class="pogged-seg-btn" data-value="0">GRAN</button><button type="button" class="pogged-seg-btn" data-value="1">VOC</button><button type="button" class="pogged-seg-btn" data-value="2">HYB</button></div>
+            </div>
         </div>
-        <div class="pogged-bracket pogged-bracket-dry"><span>DRY</span></div>
     </div>
 
     <!-- ── Setup ───────────────────────────────────────────────────

@@ -335,17 +335,18 @@
    through the ATTACK lamp and overhung the right by 42px. modgui_measure.js
    now checks both brackets against the columns they group, so a column change
    fails the tool instead of silently sliding the bracket off its buttons. */
-.pogged-panel{{{cns}}} .pogged-bracket-focus { left: 106px; right: 218px; }
-.pogged-panel{{{cns}}} .pogged-bracket-dry   { left: 413px; right: 39px;  }
-.pogged-panel{{{cns}}} .pogged-bracket-focus .pogged-lamp {
-    border-radius: 3px;
-    bottom: -10px;
-    font-size: 8px;
+.pogged-panel{{{cns}}} .pogged-bracket-focus { left: 82px; right: 242px; }
+/* FOCUS 3-way selector rides ON the bracket's HORIZONTAL LINE — its centre sits
+   on the bottom border (the wide line), not on the middle of the 7 px box whose
+   height includes the side ticks. bottom:0 puts its lower edge on the line, then
+   translateY(50%) drops it half its height so the line runs through its centre. */
+.pogged-panel{{{cns}}} .pogged-bracket-focus .pogged-seg-focus {
+    bottom: 0;
     left: 50%;
-    padding: 2px 8px;
     position: absolute;
-    transform: translateX(-50%);
+    transform: translate(-50%, 50%);
 }
+.pogged-panel{{{cns}}} .pogged-seg-focus .pogged-seg-btn { font-size: 8px; padding: 2px 7px; }
 
 /* ── Setup strip ────────────────────────────────────────── */
 /* What the POG3 keeps in its OLED menu. Visually set apart from the

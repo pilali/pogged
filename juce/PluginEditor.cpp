@@ -326,7 +326,7 @@ void SegControl::setIndex(int i)
 void SegControl::resized()
 {
     auto r = getLocalBounds();
-    r.removeFromTop(12);                       // caption row
+    if (caption.isNotEmpty()) r.removeFromTop(12);   // caption row (skip if none)
     const int n = juce::jmax(1, buttons.size());
     // Integer-divide the strip and give the remainder away one pixel at a time,
     // so the segments tile exactly with no seam or overhang at the right edge.
@@ -346,24 +346,6 @@ void SegControl::paint(juce::Graphics& g)
     g.drawText(caption.toUpperCase(), getLocalBounds().removeFromTop(11),
                juce::Justification::centredLeft);
 }
-
-// ── FocusLamp ────────────────────────────────────────────────────────────────
-FocusLamp::FocusLamp(juce::AudioProcessorValueTreeState& s, const juce::String& id)
-{
-    auto* prm = s.getParameter(id);
-    jassert(prm != nullptr);
-    auto* b = new PanelButton("FOCUS", true, true);
-    button.reset(b);
-    addAndMakeVisible(*button);
-    if (prm) {
-        attachment = std::make_unique<juce::ParameterAttachment>(
-            *prm, [this, b](float v) { on = v > 0.5f; b->on = on; b->repaint(); });
-        b->onClick = [this] { attachment->setValueAsCompleteGesture(on ? 0.0f : 1.0f); };
-        attachment->sendInitialUpdate();
-    }
-}
-
-void FocusLamp::resized() { button->setBounds(getLocalBounds()); }
 
 // ── PoggedEditor ─────────────────────────────────────────────────────────────
 namespace {
@@ -394,6 +376,7 @@ namespace {
 
             { "attack_ms",    "ATTACK", "", false, "dry_attack", false,
               {{ "attack_sens", "SENS" }} },
+            { "sustain",      "SUSTAIN", "", false, "", false, {} },
             { "lp_cutoff",    "FILTER", "", false, "dry_filter", true,
               {{ "lp_q", "Q" }, { "filter_env", "ENV", true }} },
             { "detune_cents", "DETUNE", "", false, "dry_detune", false,
@@ -402,7 +385,7 @@ namespace {
     }
     // Group breaks: before the voices, and before the effects.
     const int kBreaks[] = { 1, 7 };
-    constexpr int kVoiceFirst = 1, kVoiceLast = 6, kFxFirst = 7;
+    constexpr int kVoiceFirst = 1, kVoiceLast = 6;
 }
 
 PoggedEditor::PoggedEditor(PoggedAudioProcessor& p)
@@ -417,7 +400,10 @@ PoggedEditor::PoggedEditor(PoggedAudioProcessor& p)
         addAndMakeVisible(f);
     }
 
-    focus = std::make_unique<FocusLamp>(proc.apvts, "focus");
+    // FOCUS: 3-way engine selector, no caption (its place under the voices and
+    // the bracket already say what it is), mirroring the modgui's inline seg.
+    focus = std::make_unique<SegControl>(proc.apvts, "focus", "",
+                                         juce::StringArray { "GRAN", "VOC", "HYB" });
     addAndMakeVisible(*focus);
 
     // SETUP: what the POG3 keeps in its OLED menu. We have no OLED, and burying
@@ -472,17 +458,15 @@ void PoggedEditor::paint(juce::Graphics& g)
         g.drawVerticalLine(b.getX() - 10, (float) (b.getY() + 34), (float) (b.getBottom() - 40));
     }
 
-    // The FOCUS and DRY brackets, hung off the columns they group.
+    // The FOCUS bracket, hung off the voice columns it groups. (The DRY bracket
+    // around the three DRY lamps was removed — it was superfluous.)
     g.setColour(pogged::kInk.withAlpha(0.35f));
-    for (auto* br : { &focusBracket, &dryBracket }) {
+    {
+        const auto* br = &focusBracket;
         g.drawVerticalLine(br->getX(), (float) br->getY(), (float) br->getBottom());
         g.drawVerticalLine(br->getRight(), (float) br->getY(), (float) br->getBottom());
         g.drawHorizontalLine(br->getBottom(), (float) br->getX(), (float) br->getRight());
     }
-    g.setColour(pogged::kMuted);
-    g.setFont(pogged::font(8.0f));
-    g.drawText("DRY", dryBracket.withY(dryBracket.getBottom() + 1).withHeight(12),
-               juce::Justification::centred);
 
     // SETUP strip: set apart from the performance controls above it.
     g.setColour(pogged::kInk.withAlpha(0.18f));
@@ -537,11 +521,9 @@ void PoggedEditor::resized()
     focusBracket = juce::Rectangle<int>(
         band(kVoiceFirst).getStart(), brTop,
         band(kVoiceLast).getEnd() - band(kVoiceFirst).getStart(), brH);
-    dryBracket = juce::Rectangle<int>(
-        band(kFxFirst).getStart(), brTop,
-        band((int) cols.size() - 1).getEnd() - band(kFxFirst).getStart(), brH);
-    // The lamp rides ON the bracket, covering its middle, as on the panel.
-    focus->setBounds(focusBracket.getCentreX() - 26, brTop - 4, 52, 15);
+    // The 3-way selector rides ON the bracket, vertically centred on its line
+    // (as the panel does). Wider than the old lamp to fit GRAN/VOC/HYB.
+    focus->setBounds(focusBracket.getCentreX() - 57, focusBracket.getBottom() - 8, 114, 16);
 
     // SETUP strip.
     const int sy = getHeight() - 50;

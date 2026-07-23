@@ -143,22 +143,10 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SegControl)
 };
 
-// ── The FOCUS lamp (modgui .pogged-bracket-focus) ────────────────────────────
-// A lamp, not a segmented pair: on the pedal FOCUS is a round button hung under
-// the voices it switches. The pedal's bracket spans only +1/+2 because its POG
-// algorithm can bend nothing else; ours switches EVERY voice, so it spans them
-// all — bracketing +1/+2 here would lie. Lit = phase vocoder.
-class FocusLamp : public juce::Component
-{
-public:
-    FocusLamp(juce::AudioProcessorValueTreeState&, const juce::String& paramID);
-    void resized() override;
-private:
-    std::unique_ptr<juce::TextButton> button;
-    std::unique_ptr<juce::ParameterAttachment> attachment;
-    bool on = false;
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FocusLamp)
-};
+// FOCUS is a 3-way engine selector (Granular / Vocoder / Hybrid) — a SegControl
+// hung under the voices it switches, spanning them ALL (the pedal's bracket
+// spans only +1/+2 because its POG algorithm can bend nothing else; ours
+// switches every voice). Was a 2-state lamp before §30 added the Hybrid engine.
 
 // ── The editor ───────────────────────────────────────────────────────────────
 class PoggedEditor : public juce::AudioProcessorEditor
@@ -174,9 +162,9 @@ private:
     juce::OwnedArray<FaderControl> cols;      // level | voices | effects
     juce::OwnedArray<SegControl>   segs;      // SETUP: range, filter mode
     juce::OwnedArray<KnobControl>  setup;     // SETUP: env atk/dec/trig, heel/toe
-    std::unique_ptr<FocusLamp>     focus;
+    std::unique_ptr<SegControl>    focus;    // FOCUS: GRAN / VOC / HYB
     juce::ComboBox presetBox;
     juce::Label brand, subtitle;
-    juce::Rectangle<int> focusBracket, dryBracket;
+    juce::Rectangle<int> focusBracket;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PoggedEditor)
 };

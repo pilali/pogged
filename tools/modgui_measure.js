@@ -90,8 +90,8 @@ css  = css.replace(/\{\{\{cns\}\}\}/g, '');
       const b = document.querySelector('.pogged-bracket-' + k).getBoundingClientRect();
       return { l: b.left, r: b.right };
     };
-    return { focus: { want: span('.pogged-key'),  got: of('focus') },
-             dry:   { want: span('.pogged-lamp'), got: of('dry')   } };
+    // The DRY bracket was removed as superfluous; only FOCUS remains.
+    return { focus: { want: span('.pogged-key'), got: of('focus') } };
   });
 
   // The cap is centred on the value, so at 0 it hangs half its height BELOW the

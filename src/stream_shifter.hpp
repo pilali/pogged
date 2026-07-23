@@ -156,31 +156,41 @@ private:
 
     // Correlation-aligned respawn (Megalo's GrainPlayer::_aligned_pos on a
     // ring): scan extra lag [0, _align) and keep the candidate whose signal
-    // best correlates with what the reference tap is playing right now, so
-    // the incoming grain enters in phase with the outgoing one during the
-    // crossfade. Cost ≈ (_align/2)·K MACs per respawn — respawns happen a
-    // few tens of times per second, noise next to the per-sample work.
+    // best correlates with what the reference tap is playing right now, so the
+    // incoming grain enters in phase with the outgoing one during the crossfade.
+    //
+    // §32 phase-lock: the correlation must SPAN a good fraction of the output
+    // period to lock a LOW tone's phase — a fixed 0.5 ms window is near-DC for
+    // the ÷2 voice, so the aligner did almost nothing on the sub and left its
+    // warble (the user judged this the one warble fix that worked). Correlating
+    // ~500 consecutive samples per respawn would lock it but blew the CPU budget
+    // (66 % of a 64-frame block), so we SPAN the period yet DECIMATE: 48 fixed
+    // points spread across it. Same phase-lock, ~2x the baseline cost (not 40x);
+    // measured latency-neutral (the search range _align is unchanged). Cost ≈
+    // (_align/2)·48 MACs per respawn — respawns are a few tens of times a second.
     double _aligned(const float* ring, uint32_t mask,
                     double anchor, double ref_pos) const noexcept {
-        constexpr int K = 24;
+        constexpr int K = 48, STEP = 2;
+        const double stride = (double)std::clamp(_grain / 3, K, 4096)
+                            / (double)K * (double)_ratio;
         float ref[K];
         {
             double p = ref_pos;
             for (int i = 0; i < K; ++i) {
                 ref[i] = ring[(uint64_t)(int64_t)p & mask];
-                p += (double)_ratio;
+                p += stride;
             }
         }
         int   best_d = 0;
         float best_r = -1e30f;
-        for (int d = 0; d < _align; d += 2) {
+        for (int d = 0; d < _align; d += STEP) {
             double p = anchor - (double)d;
             float r = 0.0f, e = 1e-9f;
             for (int i = 0; i < K; ++i) {
                 const float v = ring[(uint64_t)(int64_t)p & mask];
                 r += ref[i] * v;
                 e += v * v;
-                p += (double)_ratio;
+                p += stride;
             }
             const float rn = r / std::sqrt(e);
             if (rn > best_r) { best_r = rn; best_d = d; }
