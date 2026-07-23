@@ -354,6 +354,14 @@ static constexpr float HYB_FALL_MS = 8.0f;
 #define POGGED_SUSTAIN_REL_MS 3000.0f
 #endif
 static constexpr float SUSTAIN_REL_MS = POGGED_SUSTAIN_REL_MS;
+// After the granular attack window ends, let the vocoder play LIVE this long
+// before freezing, so its ~85 ms-latency output has settled onto the note's
+// BODY rather than the attack transient (freezing too early held the attack —
+// a short, warbly "period"). Covers the long window's latency plus margin.
+#ifndef POGGED_SUSTAIN_SETTLE_MS
+#define POGGED_SUSTAIN_SETTLE_MS 150.0f
+#endif
+static constexpr float SUSTAIN_SETTLE_MS = POGGED_SUSTAIN_SETTLE_MS;
 
 // ── Transient reinjection (§18) ──────────────────────────────────────────────
 // The wet's FELT latency is its attack's: the pitched body cannot arrive
@@ -410,6 +418,7 @@ struct PoggedDsp {
     float         g_focus = 0.0f;           // smoothed engine crossfade 0..1
     int           hyb_hold = 0;             // §30: samples left holding granular
     bool          voc_frozen = false;       // §37: vocoder spectrum currently held
+    int           sust_wait  = 0;           // §37: settle countdown before freezing
 
     // Voices are panned before the mix, so the wet bus is stereo by the time
     // it reaches the filter — hence one filter per channel, same coefficients.
@@ -718,6 +727,7 @@ void pogged_dsp_reset(PoggedDsp* p)
     p->g_focus = 0.0f;
     p->hyb_hold = 0;
     p->voc_frozen = false;              // §37: pv/pv_sub reset() cleared their hold
+    p->sust_wait  = 0;
     p->filter_l.reset();
     p->filter_r.reset();
     p->env.reset();
@@ -813,6 +823,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     // onset-driven hold/rise/fall (granular attack, vocoder body).
     const int   hyb_hold_n = (int)(HYB_HOLD_MS * 0.001f * sr);
     const float hyb_rise_c = 1.0f - std::exp(-1.0f / (HYB_RISE_MS * 0.001f * sr));
+#ifdef POGGED_SUSTAIN
+    const int   sust_settle_n = (int)(SUSTAIN_SETTLE_MS * 0.001f * sr);
+#endif
     // §35: are we in the hybrid engine mode this block? Used to key the ATTACK
     // swell to the granular's own onset (see the swell block below).
     [[maybe_unused]] const bool hyb_mode = std::clamp(p_->focus, 0.0f, 2.0f) >= 1.5f;
@@ -1150,18 +1163,23 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             // onset's own broadband transient masks the step on notes still
             // ringing. Then hold granular through the vocoder's latency and
             // rise to the vocoder body over the short HYB_RISE.
-            if (hyb_onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f; }
+            if (hyb_onset) { p->hyb_hold = hyb_hold_n; p->g_focus = 0.0f;
+                             p->sust_wait = -1; }
             hyb_target = (p->hyb_hold > 0) ? 0.0f : (1.0f - HYB_FLOOR);
             if (p->hyb_hold > 0) --p->hyb_hold;
             hyb_coef = hyb_rise_c;
 #ifdef POGGED_SUSTAIN
-            // §37: once the granular attack window is spent (hyb_hold == 0) and
-            // the vocoder body takes over, FREEZE its spectrum so the note is
-            // held (with SUSTAIN_REL_MS release) until the next onset unfreezes it
-            // to capture the new note during the granular window. Edge-triggered:
-            // hold() is a bool set, applied to each wet vocoder voice only on the
-            // transition (~twice a note), never per sample.
-            const bool want_frozen = (p->hyb_hold == 0);
+            // §37: infinite sustain. After the granular attack window ends, let
+            // the vocoder play LIVE for SUSTAIN_SETTLE so its latency-delayed
+            // output settles onto the note's BODY, THEN freeze its spectrum so
+            // the note is held (with SUSTAIN_REL release) until the next onset
+            // unfreezes it to capture the new note. NEVER while the manual FREEZE
+            // is engaged (§31) — the two holds are independent. Edge-triggered:
+            // hold() is a bool set, applied per voice only on the transition.
+            if (p->hyb_hold == 0 && p->sust_wait < 0) p->sust_wait = sust_settle_n;
+            else if (p->sust_wait > 0)                --p->sust_wait;
+            const bool want_frozen =
+                (p->hyb_hold == 0 && p->sust_wait == 0) && !p->frz_engaged;
             if (want_frozen != p->voc_frozen) {
                 for (int vv = 0; vv < N_VOICES; ++vv) {
                     if (vv == V_DRYD) continue;
@@ -1180,8 +1198,13 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 #ifdef POGGED_DYN_FOCUS
         // §30: equal-power crossfade — the granular and vocoder renderings are
         // phase-incoherent, so a linear fade would dip up to -3 dB mid-cross.
-        const float g_gran = std::sqrt(std::max(0.0f, 1.0f - fx));
-        const float g_voc  = std::sqrt(std::max(0.0f, fx));
+        float g_gran = std::sqrt(std::max(0.0f, 1.0f - fx));
+        float g_voc  = std::sqrt(std::max(0.0f, fx));
+#ifdef POGGED_SUSTAIN
+        // §37: while a note is held, the sustain is PURE vocoder — no granular at
+        // all (its splice warble must not colour the held body).
+        if (p->voc_frozen) { g_gran = 0.0f; g_voc = 1.0f; }
+#endif
 #else
         const float g_gran = 1.0f - fx;
         const float g_voc  = fx;

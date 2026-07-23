@@ -139,6 +139,13 @@ ifdef SUSTAIN
     ifdef SUSTAIN_REL
         override CXXFLAGS += -DPOGGED_SUSTAIN_REL_MS=$(SUSTAIN_REL).0f
     endif
+    # SUSTAIN_SETTLE = ms the vocoder plays LIVE after the granular attack window
+    # before freezing, so it captures the note's BODY (past the ~85 ms vocoder
+    # latency) and not the attack transient. Larger = a later, more settled
+    # capture; too large captures a note already decaying.
+    ifdef SUSTAIN_SETTLE
+        override CXXFLAGS += -DPOGGED_SUSTAIN_SETTLE_MS=$(SUSTAIN_SETTLE).0f
+    endif
 endif
 
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
