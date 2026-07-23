@@ -94,6 +94,18 @@ ifdef HYBRID
     override CXXFLAGS += -DPOGGED_HYB_HOLD_MS=$(HYB_HOLD).0f -DPOGGED_HYB_FLOOR=$(HYB_FLOOR)f
 endif
 
+# §28 octave-lock anchor for the DOWN voices. A ÷2 shift copies the input's
+# harmonic balance, so on a low note with a weak fundamental the shifted f0/2 is
+# weak and the ear locks back onto the original octave — the "instability below
+# G". The anchor (octave_anchor.hpp) resynthesises a harmonic series on the
+# detected f0·ratio, following the input's spectral envelope, mixed UNDER the
+# raw shifted sub which keeps the natural timbre. ANCHOR sets that mix gain;
+# unset (default 0) leaves the anchor compiled out to a zero constant. Tune by
+# ear on hardware, e.g. `make TARGET=rpi5 HYBRID=1 ANCHOR=0.35`.
+ifdef ANCHOR
+    override CXXFLAGS += -DPOGGED_ANCHOR_MIX=$(ANCHOR)f
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 
