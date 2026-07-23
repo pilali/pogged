@@ -140,6 +140,16 @@ ifdef SUSTAIN_SETTLE
     override CXXFLAGS += -DPOGGED_SUSTAIN_SETTLE_MS=$(SUSTAIN_SETTLE).0f
 endif
 
+# §38 FREEZE_SMOOTH: route the manual FREEZE through the §36 spectral hold in
+# Vocoder/Hybrid Focus, so the held octaves stop re-analysing the loop (which
+# repeats at the loop rate — "sounds like a loop") and hold their spectrum
+# smoothly instead. The gesture is unchanged: freeze on pedal-off-heel, glide on
+# heel-tap (re-captures the new note), unfreeze on heel-hold; the dry stays live.
+# Granular Focus keeps the loop. Off by default (freeze byte-identical). A/B knob.
+ifdef FREEZE_SMOOTH
+    override CXXFLAGS += -DPOGGED_FREEZE_SMOOTH
+endif
+
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
 

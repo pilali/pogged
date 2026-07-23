@@ -472,6 +472,7 @@ struct PoggedDsp {
     bool     frz_engaged   = false;   // octaves currently held (latched)
     bool     frz_at_heel   = true;    // pedal at heel on the last block
     int      frz_heel_smp  = 0;       // samples spent at heel since leaving off
+    bool     frz_recap     = false;   // §38: a new FreezeLoop capture this block
     // Detune-mix coefficient, ramped 0 → 0.5 so enabling/disabling detune
     // crossfades the (phase-independent) detuned voice in instead of hard-
     // switching to the 50/50 average, which was an audible click.
@@ -853,7 +854,22 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     const float sustain_val = std::clamp(p_->sustain, 0.0f, SUSTAIN_MAX_MS);
     const bool  sustain_on  = sustain_val > 0.5f;
     const int   sust_delay_n = (int)(SUSTAIN_SETTLE_MS * 0.001f * sr);
-    if (sustain_on) {
+#ifdef POGGED_FREEZE_SMOOTH
+    // §38: the manual FREEZE, smoothed — it drives the SAME spectral hold as the
+    // sustain, so the frozen octaves stop re-analysing the loop (which repeats at
+    // the loop rate) and instead hold their spectrum smoothly. FREEZE holds
+    // INDEFINITELY (its functioning), so an infinite release when it is engaged.
+    const bool frz_smooth = p->frz_engaged;
+#else
+    const bool frz_smooth = false;
+#endif
+    if (frz_smooth) {
+        for (int v = 0; v < N_VOICES; ++v) {
+            if (v == V_DRYD) continue;
+            if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_hold_release(0.0f);
+            else                            p->pv[v].set_hold_release(0.0f);
+        }
+    } else if (sustain_on) {
         const float sms = std::max(200.0f, sustain_val);
         const float rel = (sms >= SUSTAIN_MAX_MS) ? 0.0f : sms;   // max = infinite
         for (int v = 0; v < N_VOICES; ++v) {
@@ -960,6 +976,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             p->frz.capture(p->frz_live.data(), p->frz_live_mask, p->frz_live_wpos,
                            (int)(glide_ms * 0.001f * sr));
             p->frz_engaged = true;
+            p->frz_recap   = true;   // §38: re-arm the smooth-freeze settle
         }
         p->frz_heel_smp = 0;
     }
@@ -1201,6 +1218,19 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         // holds are independent. Not in granular Focus (no vocoder to freeze).
         // Edge-triggered: hold() is set per voice only on the transition.
         bool want_frozen = false;
+#ifdef POGGED_FREEZE_SMOOTH
+        // §38: the manual FREEZE, smoothed. Same spectral hold as the sustain but
+        // keyed to the freeze pedal: hold the vocoder instead of re-analysing the
+        // loop. Each new capture (initial freeze OR a glide) re-arms the settle so
+        // the glide's new note is re-captured — the gesture is unchanged, only the
+        // held SOUND is smoother. Only in Vocoder/Hybrid Focus (granular keeps the
+        // loop). Mutually exclusive with the sustain branch (frz_engaged).
+        if (frz_smooth && fsel >= 0.5f) {
+            if (p->frz_recap)          { p->sust_wait = sust_delay_n; p->frz_recap = false; }
+            else if (p->sust_wait > 0) --p->sust_wait;
+            want_frozen = (p->sust_wait == 0);
+        } else
+#endif
         if (sustain_on && fsel >= 0.5f && !p->frz_engaged) {
             if (hyb_onset)             p->sust_wait = sust_delay_n;   // new note
             else if (p->sust_wait > 0) --p->sust_wait;
