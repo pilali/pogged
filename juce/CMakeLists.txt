@@ -52,6 +52,23 @@ target_compile_definitions(Pogged PUBLIC
     # defined before <cmath>. No-op on gcc/clang.
     _USE_MATH_DEFINES)
 
+# DSP feature flags. The Makefile passes these to the LV2 build (see `make
+# HYBRID=1 ...`); the JUCE/CMake build has to define them TOO, or the desktop
+# plugin ships the plain vocoder — the Hybrid Focus, the Sustain control and the
+# smooth Freeze all live behind POGGED_DYN_FOCUS and would be inert (the UI shows
+# them but the DSP has no code for them). These mirror the Makefile's validated
+# HYBRID defaults exactly, so the AU/VST3/Standalone behave like `make HYBRID=1`.
+target_compile_definitions(Pogged PRIVATE
+    POGGED_DYN_FOCUS               # 3-way Focus + hybrid engine (needed by Sustain)
+    POGGED_GRAIN_UP_MS=12.0f
+    POGGED_GRAIN_PERIODS=3.0f      # validated sub grain
+    POGGED_GRAIN_UP_PERIODS=3.0f   # validated up grain (fixes +1/fifth warble)
+    POGGED_PV_OS=4
+    POGGED_HYB_HOLD_MS=100.0f
+    POGGED_HYB_FLOOR=0.0f
+    POGGED_HYB_SWELL               # ATTACK operative in hybrid
+    POGGED_FREEZE_SMOOTH)          # spectral-hold Freeze (no loop)
+
 target_link_libraries(Pogged
     PRIVATE juce::juce_audio_utils
     PUBLIC  juce::juce_recommended_config_flags
