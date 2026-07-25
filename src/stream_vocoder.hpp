@@ -243,7 +243,7 @@ public:
         if (_out_fill <= 0) return 0.0f;
         float out = _out_buf[_out_read];
         _out_buf[_out_read] = 0.0f;
-        _out_read = (_out_read + 1) % OUTBUF;
+        _out_read = (_out_read + 1) & (OUTBUF - 1);   // power of two; see the OLA
         --_out_fill;
         return out;
     }
@@ -308,7 +308,10 @@ private:
             // phase of ~−π per bin (sign alternation); removing it makes the
             // lobe a SMOOTH complex curve that can be linearly interpolated.
             _ana_cx[k] = (k & 1) ? -_cx[k] : _cx[k];
-            _hist[_hist_idx][k] = _ana_cx[k];          // §22 Prony history
+            // §22 Prony history — only _try_parametric reads it, and the sub
+            // voices switch that off outright (prony(false, false), §27), so
+            // writing BINS complex values per frame for them was pure cost.
+            if (PRONY_ON) _hist[_hist_idx][k] = _ana_cx[k];
         }
 
         _ph_idx = (_ph_idx + 1) % EB;
@@ -602,15 +605,20 @@ private:
         // so dividing by it yields unity passthrough. (The previous factor was
         // wrong by ~N/2, making the pitch voices ~1340× too quiet / inaudible.)
         const float scale = 1.0f / (0.375f * _osamp);
+        // OUTBUF is a power of two and every index here is non-negative, so the
+        // mask is exactly the modulo — without the sign correction the compiler
+        // is obliged to emit for a signed `%`. This runs 2xM times per frame.
+        static_assert((OUTBUF & (OUTBUF - 1)) == 0, "OUTBUF must be a power of 2");
+        constexpr int OUTMASK = OUTBUF - 1;
         for (int i = 0; i < M; i++) {
             const float e = _work[i].real() * _win[2 * i]     * scale;
             const float o = _work[i].imag() * _win[2 * i + 1] * scale;
-            int idx = (_out_write + 2 * i) % OUTBUF;
+            int idx = (_out_write + 2 * i) & OUTMASK;
             _out_buf[idx] += e;
-            idx = (_out_write + 2 * i + 1) % OUTBUF;
+            idx = (_out_write + 2 * i + 1) & OUTMASK;
             _out_buf[idx] += o;
         }
-        _out_write = (_out_write + HOP) % OUTBUF;
+        _out_write = (_out_write + HOP) & OUTMASK;
         _out_fill  = std::min(_out_fill + HOP, OUTBUF);
     }
 
@@ -930,12 +938,16 @@ private:
             if (i < j) std::swap(a[i], a[j]);
         }
         // Butterfly stages; _tw[j·step] = e^{-2πi·j/len} with step = M/len.
+        // The forward/inverse choice is a per-CALL constant, so it is resolved
+        // once here rather than branching (and conjugating) inside the innermost
+        // loop, which runs M/2·log2(M) times per transform.
+        const float wsign = inverse ? -1.0f : 1.0f;
         for (int len = 2; len <= M; len <<= 1) {
             const int step = M / len;
             for (int i = 0; i < M; i += len) {
                 for (int j = 0; j < len / 2; j++) {
-                    std::complex<float> w = _tw[j * step];
-                    if (inverse) w = std::conj(w);
+                    const std::complex<float>& t = _tw[j * step];
+                    const std::complex<float> w(t.real(), wsign * t.imag());
                     const auto u = a[i + j];
                     const auto v = a[i + j + len / 2] * w;
                     a[i + j]           = u + v;

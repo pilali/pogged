@@ -133,13 +133,10 @@ public:
     // the short window's band).
     void prony_fmin(float lo_hz) noexcept { _lo.PRONY_FMIN = lo_hz; }
 
-    // §26: cap the analysed input peaks of BOTH windows (the sub voice uses
-    // this to stop halving the chord's upper partials into a dissonant tone).
-    void peak_fmax(float hz) noexcept { _lo.PEAK_FMAX = hz; _hi.PEAK_FMAX = hz; }
-
-    // §24 harness knob: _rot writeback half-width of the short window's
-    // hinted renderer (see StreamVocoderT::HINT_ROTW).
-    void hint_rotw(int w) noexcept { _hi.HINT_ROTW = w; }
+    // (peak_fmax / hint_rotw used to sit here. §26 was measured and RETIRED —
+    // it removed the F# fold but smeared the attack — and nothing ever called
+    // the §24 HINT_ROTW harness knob. Both members they set are still public on
+    // StreamVocoderT for an offline harness to sweep; the forwarders were dead.)
 
     // §29: LONG-window-only mode for the UP voices. The output crossover uses
     // OUTPUT frequency as a proxy for which INPUT partial fed a given output

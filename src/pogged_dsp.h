@@ -52,9 +52,14 @@ typedef struct {
                                              Sizes the sub voices' grains and
                                              correlation scan. Trades sub
                                              latency for low-end stability.   */
-    float focus;         /* idx 28 [0/1]  engine: 0 = granular (POG-style, low
+    float focus;         /* idx 28 [0/1/2]  engine: 0 = granular (POG-style, low
                                             latency), 1 = phase vocoder (clean
-                                            on chords, ~85 ms). POG3's FOCUS.  */
+                                            on chords, ~85 ms), 2 = hybrid
+                                            (granular attack + vocoder body).
+                                            POG3's FOCUS. 2 needs a build with
+                                            POGGED_DYN_FOCUS — the default
+                                            everywhere except the MOD boards,
+                                            where it reads as 1.              */
     float input_gain;    /* idx 29 [0.5 – 3]  POG3 INPUT GAIN: the level seen
                                             at the input, so it feeds the
                                             voices, the dry AND the onset
@@ -100,6 +105,8 @@ typedef struct {
                                             or a DAW's automation / MIDI learn)
                                             rather than as a fader nobody would
                                             drag by hand.                       */
+    /* ONE port, not two: there is no `sustain_ms` companion — this single
+       control carries the on/off AND the release. */
     float sustain;       /* idx 37 [0 – 5000]  §37 sustain, one control carrying
                                             both its on/off AND its decay: 0 = off,
                                             > 0 = ON with that release time in ms.

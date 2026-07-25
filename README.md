@@ -44,12 +44,12 @@ components).
 | Filter Env Attack | 1–1000 ms | Sweep rise time. |
 | Filter Env Decay | 1–2000 ms | Sweep fall time. |
 | Filter Env Sens | 0–100 % | Sweep trigger sensitivity — separate from Attack Sens, as on the POG3. |
-| Focus | Granular / Vocoder *(/ Hybrid)* | Which transposition engine (POG3's FOCUS). **Granular** is the POG sound and answers in 3 ms, but a chord makes its grain splices cancel unevenly (+4.8 dB of ripple on the sub). **Vocoder** translates each spectral peak independently and is measurably perfect on chords (+0.0 dB over an ideal shift) at ~85 ms of latency. In a `HYBRID=1` build (see Build options) Focus is a three-way selector with **Hybrid** added: granular for the attack, vocoder for the sustained body, so a chord is clean without the vocoder's latency on the pluck. The dry path stays at zero in every case. |
+| Focus | Granular / Vocoder *(/ Hybrid)* | Which transposition engine (POG3's FOCUS). **Granular** is the POG sound and answers in 3 ms, but a chord makes its grain splices cancel unevenly (+4.8 dB of ripple on the sub). **Vocoder** translates each spectral peak independently and is measurably perfect on chords (+0.0 dB over an ideal shift) at ~85 ms of latency. Focus is a three-way selector with **Hybrid** added (the default build everywhere except the two MOD boards, which cannot carry two engines at once — see Build options): granular for the attack, vocoder for the sustained body, so a chord is clean without the vocoder's latency on the pluck. The dry path stays at zero in every case. |
 | Range | Guitar / Baritone / Bass | Lowest note the instrument plays. Sizes the sub voices' grains, since a sub emits an octave *below* what you play (a baritone's low B lands the sub at 31 Hz). Longer grains stabilise single low notes but delay the sub and make chords ripple more — hence a switch, not an assumption. |
 | Output | 0–200 % | Master output gain into a soft clipper. |
 | Pan (×6) | L–C–R | Per-voice placement in the stereo field (dry, −1, −2, +5th, +1, +2). Centre is full level on **both** outputs, so a single output still carries everything. |
 | Spread | 0–100 % | POG3 stereo delay on the +5th/+1/+2 voices — right channel 3× longer than left (≤150 ms / ≤50 ms). The sub octaves are excluded, as on the hardware. 0 = off (bit-transparent). |
-| Sustain | 0 / 200 ms–5 s | Hands-free infinite sustain (distinct from Freeze). One fader carries both on/off **and** the hold time: **0 = off**; above 0 auto-holds each note (once the vocoder body settles) until the next attack, fading over that release time; the **maximum (5 s) = infinite** (holds until you play again). Works in **Vocoder or Hybrid** Focus (a vocoder must be sounding to freeze). Requires a `HYBRID=1` build. |
+| Sustain | 0 / 200 ms–5 s | Hands-free infinite sustain (distinct from Freeze). One fader carries both on/off **and** the hold time: **0 = off**; above 0 auto-holds each note (once the vocoder body settles) until the next attack, fading over that release time; the **maximum (5 s) = infinite** (holds until you play again). Works in **Vocoder or Hybrid** Focus (a vocoder must be sounding to freeze). Absent from a `HYBRID=0` build and from the MOD boards. |
 
 ## Presets
 
@@ -94,10 +94,10 @@ python3 tools/gen_presets.py     # regenerate LV2 preset TTLs + JUCE header
 
 `make audit` answers "does it still sound right". `make eval` answers the other
 three questions: does every documented build flag combination still compile
-(`tools/eval/build_matrix.sh`, ~20 configurations against a known-failures
-baseline), what functions exist ([`docs/function-inventory.md`](docs/function-inventory.md)),
+(`tools/eval/build_matrix.sh`, which asks the Makefile for each configuration's
+flags rather than restating them), what functions exist ([`docs/function-inventory.md`](docs/function-inventory.md)),
 and what a block costs against its deadline (`tools/eval/cpu_profile.cpp`, which
-inherits the plugin's own `CXXFLAGS` — so `make eval-cpu TARGET=rpi5 HYBRID=1`
+inherits the plugin's own `CXXFLAGS` — so `make eval-cpu TARGET=rpi5`
 profiles that build). The findings of a full pass, including the CPU
 optimisations it turned up, are in
 [`docs/code-evaluation.md`](docs/code-evaluation.md).
@@ -157,43 +157,51 @@ source file changed.
 |---|---|---|
 | `native` *(default)* | This machine | Desktop LV2, full engine choice. |
 | `rpi5` | Raspberry Pi 5 / pistomp | Cross-compiles `aarch64` (Cortex-A76), static libstdc++/libgcc. |
-| `moddwarf-new` | MOD Dwarf (Cortex-A35) | Vocoder compiled out (`POGGED_NO_VOCODER`) — the A35 can't carry it; granular only. |
-| `modduox-new` | MOD Duo X (quad Cortex-A53) | Vocoder pinned to a single 2048 window (`POGGED_PV_N=2048`) for CPU. |
+| `moddwarf-new` | MOD Dwarf (Cortex-A35) | Vocoder compiled out (`POGGED_NO_VOCODER`) — the A35 can't carry it; granular only. Hybrid off. |
+| `modduox-new` | MOD Duo X (quad Cortex-A53) | Vocoder pinned to a single 2048 window (`POGGED_PV_N=2048`) for CPU. Hybrid off. |
 
-### Hybrid Focus — `HYBRID=1`
+### Hybrid Focus — on by default
 
-Enables the POG-class **dynamic Focus**: the granular engine renders the tight
-attack (~12–20 ms), the phase vocoder the clean sustained body, crossfaded per
-note by an onset detector — the low-latency answer to the vocoder's ~85 ms
-"doublon". Off by default. These sub-flags apply only together with `HYBRID=1`:
+The POG-class **dynamic Focus**: the granular engine renders the tight attack
+(~12–20 ms), the phase vocoder the clean sustained body, crossfaded per note by
+an onset detector — the low-latency answer to the vocoder's ~85 ms "doublon".
+
+**On by default** on `native` and `rpi5`, which is what the JUCE build has always
+done for the VST3/AU, so the LV2 and the desktop plugin are the same engine.
+**Off on both MOD boards**, and asking for it there (`HYBRID=1`) is a build error
+rather than a silent surprise: neither board can run two engines through an
+onset — the Dwarf has no vocoder at all and the Duo X pins one window precisely
+to fit its budget. `make HYBRID=0` builds the plain two-way Focus anywhere.
+
+These sub-flags apply only to a hybrid build:
 
 | Flag | Default | Effect |
 |---|---|---|
 | `GRAIN_UP=<ms>` | `12` | Up-voice grain length. Shorter = tighter attack, more warble. |
 | `GRAIN_PER=<periods>` | `3.0` | Sub-voice grain length, in periods of the sub's *output*. `3.0` (validated) holds the low octave stably; **2.0–3.0** is the useful range; below its ~2-period floor the splice warbles into mush. |
-| `PV_OS=<4\|8>` | `4` | Vocoder overlap factor on the up voices. 8 = denser frames, 2× the FFT cost. |
 | `HYB_HOLD=<ms>` | `100` | Granular hold after each onset before handing to the vocoder body (covers the vocoder's latency). |
 | `HYB_FLOOR=<0..1>` | `0.0` | Granular kept *under* the vocoder body during sustain (0 = pure vocoder body; higher = more granular immediacy, a little more warble). |
 
 ### Standalone tuning flags
 
-Work with any target, and — where noted — alongside `HYBRID=1`:
+Work with any target:
 
 | Flag | Default | Effect |
 |---|---|---|
 | `GRAIN_UP_PER=<periods>` | `3.0` | Size each **up** voice's grain to span this many periods of its lowest output at the current range, floored at `GRAIN_UP`. `3.0` (validated) fixes the +1 / fifth warble ("bouillie") on low and baritone notes; `0` restores the old fixed grain. |
 | `HYB_SWELL=<0\|1>` | `1` *(on)* | Makes the **ATTACK** swell operative in hybrid: keys the swell to the granular engine's own onset, so it swells on every pluck like the vocoder's per-bin swell. Reads the hybrid detector only — the hybrid switch itself is untouched. `HYB_SWELL=0` disables. |
 | `FREEZE_SMOOTH=<0\|1>` | `1` *(on)* | Routes the manual **Freeze** through the spectral hold in Vocoder/Hybrid Focus, so the held octaves hold their spectrum smoothly instead of re-analysing the loop (which "sounds like a loop"). The gesture is unchanged (freeze / glide / unfreeze, dry stays live); granular Focus keeps the loop. `FREEZE_SMOOTH=0` restores the loop freeze. |
-| `ANCHOR=<gain>` | `0` *(off)* | Mixes a resynthesised octave-lock anchor under the sub voices to steady the low octave when the input fundamental is weak. Of little benefit for attack-style playing. |
+| `PV_OS=<4\|8>` | `4` | Vocoder overlap factor. 8 = denser frames for a difference A/B'd as inaudible, at +33 % of the plugin's CPU — hence 4 everywhere. Applies to every target, hybrid or not. |
+| `ANCHOR=<gain>` | *(not built)* | Mixes a resynthesised octave-lock anchor under the sub voices to steady the low octave when the input fundamental is weak. Of little benefit for attack-style playing. Unset, it is not compiled in at all; pass any value to build and audition it. |
 | `XBAND=<1\|hz>` | off | Raises the vocoder crossover so the long 4096 window carries more low-mid and resolves the "dissonant wanderer" harmonic-pair midpoints. `XBAND=1` = 600 Hz; a higher value (e.g. `XBAND=900`) is cleaner but pays the 85 ms window over more of the band. |
-| `SUSTAIN_SETTLE=<ms>` | `250` | Delay from the attack to the freeze for the **Sustain** control (runtime), so the capture lands on the note's *body*, past the ~85 ms vocoder latency — not the attack transient. Larger = later, more settled; too large captures a note already decaying. Sustain on/off and its release are the `sustain` / `sustain_ms` ports, not build flags. |
+| `SUSTAIN_SETTLE=<ms>` | `250` | Delay from the attack to the freeze for the **Sustain** control (runtime), so the capture lands on the note's *body*, past the ~85 ms vocoder latency — not the attack transient. Larger = later, more settled; too large captures a note already decaying. Sustain on/off and its release both live on the single `sustain` port, not on build flags. |
 
-**A full tuned hybrid build** for the Pi 5. The validated defaults (`GRAIN_PER`
-and `GRAIN_UP_PER` = 3.0, `HYB_SWELL` and `FREEZE_SMOOTH` on) mean only `HYBRID`
-and your grain-attack preference need passing:
+**A full tuned hybrid build** for the Pi 5. Every validated default (hybrid on,
+`GRAIN_PER` and `GRAIN_UP_PER` = 3.0, `PV_OS=4`, `HYB_SWELL` and `FREEZE_SMOOTH`
+on) is already the default, so only a grain-attack preference needs passing:
 
 ```sh
-make TARGET=rpi5 HYBRID=1 GRAIN_UP=10
+make TARGET=rpi5 GRAIN_UP=10
 ```
 
 ## License

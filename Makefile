@@ -10,8 +10,52 @@ TARGET ?= native
 # NOT yet measured on real MOD hardware — the Duo X setting is a reasoned
 # guess (quad A53) and should be confirmed on the device.
 
+# ── Which targets get the hybrid engine ────────────────────────────────────
+# The hybrid (§30) runs the granular engine for the attack and the vocoder for
+# the body, which means both engines are live through every onset. The two MOD
+# boards cannot pay for that and are not asked to: the Dwarf has no vocoder at
+# all (POGGED_NO_VOCODER — an A35 cannot carry one) and the Duo X pins a single
+# 2048 window precisely to fit its budget. Everything else — desktop, Pi 5, and
+# the JUCE build, which sets the same defines in juce/CMakeLists.txt — ships
+# hybrid, so the LV2 and the VST3/AU are finally the same plugin.
+#
+# HYBRID is therefore a per-target DEFAULT, not a flag you have to remember.
+# `make HYBRID=0` opts out anywhere; asking for it on a MOD board is an error
+# rather than a compile failure three screens down.
+ifeq ($(filter $(TARGET),moddwarf-new modduox-new),)
+    HYBRID_SUPPORTED = 1
+else
+    HYBRID_SUPPORTED = 0
+endif
+HYBRID ?= $(HYBRID_SUPPORTED)
+ifeq ($(HYBRID),1)
+    ifneq ($(HYBRID_SUPPORTED),1)
+        $(error HYBRID=1 is not supported on TARGET=$(TARGET). The MOD boards \
+                run the granular engine only (Dwarf) or a single pinned vocoder \
+                window (Duo X); the hybrid needs both engines live at once. \
+                Build the hybrid for TARGET=native or TARGET=rpi5.)
+    endif
+endif
+
 # ── Per-target defaults ────────────────────────────────────────────────────
-# override is needed so cross-compilation targets win over the environment CXX.
+# Two kinds of flag live in this section and they must not be mixed up:
+#
+#   - BASE toolchain flags (-O3, -mcpu, ...) use `?=`, so a caller passing its
+#     own CXXFLAGS wins. That is what mod-plugin-builder does.
+#   - FEATURE defines — the ones that make a target what it is — use
+#     `override +=`, because a command-line CXXFLAGS would otherwise silently
+#     DROP them. Not hypothetical: plugins/package/pogged/pogged.mk passes
+#     CXXFLAGS, which discarded -DPOGGED_NO_VOCODER and shipped the Dwarf the
+#     very vocoder its A35 cannot carry.
+#
+# override is also needed on CXX so cross-compilation targets win over the
+# environment's compiler.
+ifeq ($(TARGET),moddwarf-new)
+    override CXXFLAGS += -DPOGGED_NO_VOCODER
+else ifeq ($(TARGET),modduox-new)
+    override CXXFLAGS += -DPOGGED_PV_N=2048
+endif
+
 ifeq ($(TARGET),rpi5)
     override CXX      := aarch64-linux-gnu-g++
     # -fno-tree-vectorize avoids emitting calls to libmvec (vectorized math),
@@ -31,16 +75,18 @@ else ifeq ($(TARGET),moddwarf-new)
     # MOD Dwarf — Cortex-A35, the most constrained target.
     # mod-plugin-builder injects CXX and CXXFLAGS via command-line args.
     # Use ?= so those take precedence; fallbacks serve only for manual builds.
+    # POGGED_NO_VOCODER is NOT here — it is an `override +=` above, so it
+    # survives mod-plugin-builder's own CXXFLAGS.
     CXX      ?= aarch64-modaudio-linux-gnu-g++
     CXXFLAGS ?= -std=c++17 -O3 -ffast-math \
-                -mcpu=cortex-a35 -DPOGGED_NO_VOCODER \
+                -mcpu=cortex-a35 \
                 -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter
 
 else ifeq ($(TARGET),modduox-new)
-    # MOD Duo X — quad Cortex-A53 (ARMv8-A).
+    # MOD Duo X — quad Cortex-A53 (ARMv8-A). POGGED_PV_N: see above.
     CXX      ?= aarch64-modaudio-linux-gnu-g++
     CXXFLAGS ?= -std=c++17 -O3 -ffast-math \
-                -mcpu=cortex-a53 -DPOGGED_PV_N=2048 \
+                -mcpu=cortex-a53 \
                 -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter
 
 else  # native
@@ -63,38 +109,43 @@ ifdef XBAND
     endif
 endif
 
-# §30 experiment: HYBRID=1 enables the dynamic-Focus POG-class hybrid — the
-# granular engine renders the tight ATTACK (low latency), the vocoder the clean
-# sustained BODY, crossfaded per note by the onset detector. This is the fix for
-# the ~81 ms "doublon" the vocoder alone leaves under the zero-latency dry.
-# HYBRID=1 also shortens the grains (12 ms up / 1.5 periods down) since the
-# granular only carries the brief attack, pulling the attack latency toward the
-# POG's ~12-20 ms. Off by default. Works with any TARGET, e.g.
-# `make TARGET=rpi5 HYBRID=1`. Override grains: `make HYBRID=1 GRAIN_UP=10 GRAIN_PER=1.4`.
-ifdef HYBRID
+# §21 vocoder overlap factor, EVERY build. 4 = hop N/4; 8 doubles the frame
+# rate — same windows, same latency, denser OLA. The user A/B'd the two and
+# confirmed OS=8≈OS=4 by ear, and it costs a third of the whole plugin's CPU:
+# measured, six voices, 64-sample blocks, vocoder Focus, mean 188→127 us and
+# worst block 546→431 us going from 8 to 4 (docs/code-evaluation.md, C3). So 4
+# is the default everywhere, not only under HYBRID as it used to be. Keep the
+# denser frames with `make PV_OS=8`.
+PV_OS ?= 4
+override CXXFLAGS += -DPOGGED_PV_OS=$(PV_OS)
+
+# §30 the dynamic-Focus POG-class hybrid — the granular engine renders the tight
+# ATTACK (low latency), the vocoder the clean sustained BODY, crossfaded per note
+# by the onset detector. This is the fix for the ~81 ms "doublon" the vocoder
+# alone leaves under the zero-latency dry. It also shortens the grains (12 ms up)
+# since the granular only carries the brief attack, pulling the attack latency
+# toward the POG's ~12-20 ms.
+#
+# ON by default on every target that can carry it (see HYBRID_SUPPORTED above),
+# which is what juce/CMakeLists.txt already did for the VST3/AU. `make HYBRID=0`
+# builds the plain two-way Focus. Override grains:
+# `make GRAIN_UP=10 GRAIN_PER=1.4`.
+ifeq ($(HYBRID),1)
     override CXXFLAGS += -DPOGGED_DYN_FOCUS
     GRAIN_UP  ?= 12
     # Sub-voice grain length in periods. 3.0 (validated by ear) holds the low
     # octave stably; drop it (e.g. GRAIN_PER=2.0) for a tighter, slightly less
     # stable sub. Below ~2 it warbles.
     GRAIN_PER ?= 3.0
-    override CXXFLAGS += -DPOGGED_GRAIN_UP_MS=$(GRAIN_UP).0f -DPOGGED_GRAIN_PERIODS=$(GRAIN_PER)f
-    # §30 CPU: the hybrid runs both engines, so trim the vocoder to fit tight
-    # JACK buffers (64). OS=4 on the up voices (the user confirmed OS=8≈OS=4 by
-    # ear) halves their FFT rate; the sub's short window is dropped in-code
-    # under POGGED_DYN_FOCUS (its attack now comes from the granular). Measured
-    # on the real take: mean 73→38 us/block, worst-block below the pre-hybrid
-    # vocoder. Override with e.g. `HYBRID=1 PV_OS=8` to keep OS=8 on the ups.
-    PV_OS ?= 4
-    override CXXFLAGS += -DPOGGED_PV_OS=$(PV_OS)
+    override CXXFLAGS += -DPOGGED_GRAIN_UP_MS=$(GRAIN_UP) -DPOGGED_GRAIN_PERIODS=$(GRAIN_PER)
     # §30 feel: HYB_HOLD = ms of granular after each onset before handing to the
     # vocoder body; HYB_FLOOR = granular kept UNDER the vocoder body during
     # sustain (0 = pure-vocoder body; higher = more of the granular's immediacy,
     # a little more warble). g_gran during sustain = sqrt(FLOOR). Tune by ear:
-    # `make HYBRID=1 HYB_HOLD=150 HYB_FLOOR=0.15`.
+    # `make HYB_HOLD=150 HYB_FLOOR=0.15`.
     HYB_HOLD  ?= 100
     HYB_FLOOR ?= 0.0
-    override CXXFLAGS += -DPOGGED_HYB_HOLD_MS=$(HYB_HOLD).0f -DPOGGED_HYB_FLOOR=$(HYB_FLOOR)f
+    override CXXFLAGS += -DPOGGED_HYB_HOLD_MS=$(HYB_HOLD) -DPOGGED_HYB_FLOOR=$(HYB_FLOOR)
 endif
 
 # §28 octave-lock anchor for the DOWN voices. A ÷2 shift copies the input's
@@ -102,11 +153,13 @@ endif
 # weak and the ear locks back onto the original octave — the "instability below
 # G". The anchor (octave_anchor.hpp) resynthesises a harmonic series on the
 # detected f0·ratio, following the input's spectral envelope, mixed UNDER the
-# raw shifted sub which keeps the natural timbre. ANCHOR sets that mix gain;
-# unset (default 0) leaves the anchor compiled out to a zero constant. Tune by
-# ear on hardware, e.g. `make TARGET=rpi5 HYBRID=1 ANCHOR=0.35`.
+# raw shifted sub which keeps the natural timbre. ANCHOR sets that mix gain.
+# Unset (the default) the anchor is not built at all — not merely multiplied by
+# a zero constant: its two instances are 121 KiB each of member arrays, which is
+# cache pressure on a MOD board for a feature that is off. Pass any value to
+# compile it in and audition it, e.g. `make TARGET=rpi5 ANCHOR=0.35`.
 ifdef ANCHOR
-    override CXXFLAGS += -DPOGGED_ANCHOR_MIX=$(ANCHOR)f
+    override CXXFLAGS += -DPOGGED_ANCHOR_MIX=$(ANCHOR)
 endif
 
 # §34 up-voice grain sizing. The UP voices use a FIXED grain (GRAIN_UP ms),
@@ -118,7 +171,7 @@ endif
 # GRAIN_UP_PER=0 to restore the old fixed grain, or another value to trade
 # stability against latency. `make ... GRAIN_UP_PER=2.2`.
 GRAIN_UP_PER ?= 3.0
-override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)f
+override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)
 
 # §35 ATTACK swell in HYBRID mode. In hybrid the granular renders the attack and
 # swells only via the global env, which was keyed to `det` (attack_sens) — far
@@ -127,21 +180,23 @@ override CXXFLAGS += -DPOGGED_GRAIN_UP_PERIODS=$(GRAIN_UP_PER)f
 # ATTACK felt inoperative in hybrid. HYB_SWELL=1 keys the swell to the same
 # onset that drives the granular takeover, so it swells on every pluck like the
 # vocoder's per-bin swell. Reads hyb_det only — the §30 hybrid fix is untouched.
-# ON by default (validated); disable with `HYB_SWELL=0`. No effect without HYBRID.
+# ON by default (validated); disable with `HYB_SWELL=0`. Inert in a HYBRID=0
+# build (the MOD targets), which has no hybrid onset to key the swell to.
 HYB_SWELL ?= 1
 ifneq ($(HYB_SWELL),0)
     override CXXFLAGS += -DPOGGED_HYB_SWELL
 endif
 
-# §37 infinite sustain is a RUNTIME feature now — the `sustain` (on/off) and
-# `sustain_ms` (release; max = infinite) ports, compiled into every HYBRID build
-# and toggled while playing. Nothing to enable at build time. The one build knob
-# left is SUSTAIN_SETTLE: ms from the attack to the freeze, so the capture lands
-# on the note's BODY (past the ~85 ms vocoder latency), not the attack transient.
+# §37 infinite sustain is a RUNTIME feature — ONE `sustain` port (idx 37)
+# carrying both the on/off and the release (0 = off, > 0 = release in ms, the
+# 5000 maximum = infinite), compiled into every hybrid build and toggled while
+# playing. Nothing to enable at build time. The one build knob left is
+# SUSTAIN_SETTLE: ms from the attack to the freeze, so the capture lands on the
+# note's BODY (past the ~85 ms vocoder latency), not the attack transient.
 # Larger = a later, more settled capture; too large captures a note already
-# decaying. `make ... HYBRID=1 SUSTAIN_SETTLE=250`.
+# decaying. `make ... SUSTAIN_SETTLE=250`.
 ifdef SUSTAIN_SETTLE
-    override CXXFLAGS += -DPOGGED_SUSTAIN_SETTLE_MS=$(SUSTAIN_SETTLE).0f
+    override CXXFLAGS += -DPOGGED_SUSTAIN_SETTLE_MS=$(SUSTAIN_SETTLE)
 endif
 
 # §38 FREEZE_SMOOTH: route the manual FREEZE through the §36 spectral hold in
@@ -150,11 +205,20 @@ endif
 # smoothly instead. The gesture is unchanged: freeze on pedal-off-heel, glide on
 # heel-tap (re-captures the new note), unfreeze on heel-hold; the dry stays live.
 # Granular Focus keeps the loop. ON by default (validated); disable with
-# `FREEZE_SMOOTH=0` to restore the byte-identical loop freeze. No effect without HYBRID.
+# `FREEZE_SMOOTH=0` to restore the byte-identical loop freeze. Inert in a
+# HYBRID=0 build (the MOD targets), which keeps the loop freeze throughout.
 FREEZE_SMOOTH ?= 1
 ifneq ($(FREEZE_SMOOTH),0)
     override CXXFLAGS += -DPOGGED_FREEZE_SMOOTH
 endif
+
+# None of the -D values above carry an `f` suffix, deliberately. They used to
+# ($(GRAIN_UP).0f, $(GRAIN_PER)f, ...), which worked only for the exact shape of
+# the default: `make GRAIN_UP_PER=0` produced `0f`, which is not a C++ literal,
+# and the documented way to restore the old fixed grain therefore never
+# compiled. Every one of these macros initialises a `static constexpr float`, so
+# an int or double literal converts on the C++ side and any value the user can
+# reasonably type works. (Found by tools/eval/build_matrix.sh.)
 
 # In cross-compilation CXXFLAGS already contains -I$(STAGING_DIR)/usr/include
 LV2FLAGS ?= $(shell pkg-config --cflags lv2 2>/dev/null)
@@ -163,11 +227,14 @@ BUNDLE  = pogged.lv2
 BINARY  = $(BUNDLE)/pogged.so
 
 SOURCES = src/plugin.cpp src/glibc_compat.cpp src/pogged_dsp.cpp
-HEADERS = src/pogged_dsp.h src/stream_shifter.hpp src/onset_detector.hpp \
-          src/biquad.hpp src/envelope.hpp src/freeze_loop.hpp \
-          src/stream_filterbank.hpp src/stream_vocoder.hpp \
-          src/stream_multivocoder.hpp \
-          src/octave_anchor.hpp
+# Every header in src/, by wildcard, deliberately. The hand-written list this
+# replaces had drifted BOTH ways: it named stream_filterbank.hpp, which the
+# plugin does not include (it is a spike, used only by tools/), and it MISSED
+# delay_line.hpp, which carries the whole SPREAD path — so editing delay_line
+# left `make` answering "nothing to do" and the .so holding the old code. The
+# plugin is one compile command over three sources; a wildcard can rebuild a
+# little too often, but it can never miss.
+HEADERS = $(wildcard src/*.h src/*.hpp)
 
 all: $(BINARY)
 
@@ -229,7 +296,13 @@ clean:
 #                 within ~20 ms (the reinjected pick snap) while the tonal
 #                 body blooms at its own pace; gated off by DRY and ATTACK
 AUDIT_DIR   = build/audit
-AUDIT_FLAGS = -O2 -std=c++17 -Isrc
+# The feature defines are carried over from the build's own CXXFLAGS, so
+# `make audit HYBRID=0` or `make audit TARGET=moddwarf-new CXX=g++` audits THAT
+# engine. Without this the harnesses were compiled with the default macro set
+# whatever you asked for, so the hybrid path — the one the VST3/AU ships — was
+# never actually exercised. Only -D/-U are taken: -mcpu belongs to a cross
+# target and these binaries run on the build host.
+AUDIT_FLAGS = -O2 -std=c++17 -Isrc $(filter -D%,$(CXXFLAGS)) $(filter -U%,$(CXXFLAGS))
 
 audit: $(HEADERS)
 	@mkdir -p $(AUDIT_DIR)
@@ -319,6 +392,14 @@ eval: eval-matrix eval-functions eval-cpu
 eval-matrix:
 	@echo "══ build matrix ══"
 	@tools/eval/build_matrix.sh
+
+# The flags a given TARGET/HYBRID/... combination actually produces. Exists so
+# build_matrix.sh can ASK the Makefile instead of restating its logic — a matrix
+# that keeps its own copy of the flag expansion tests its copy, not the build.
+print-flags:
+	@printf '%s\n' "$(CXXFLAGS)"
+
+.PHONY: print-flags
 
 eval-functions:
 	@echo "══ function inventory ══"

@@ -50,9 +50,15 @@ public:
         // detune (measurably lopsided chorus). Warp changes it deliberately,
         // through set_lag_ratio().
         _lag_ratio = _ratio * RATIO_HEADROOM;
-        if (grain_samples != _grain) {
-            _grain = std::max(grain_samples, 64);
+        // Forced EVEN so the half-grain stagger below is a whole number of
+        // samples — which is what makes the two taps' envelopes exact
+        // complements. Losing at most one sample of a grain hundreds long is
+        // far below anything the aligner or the ear resolves.
+        const int g = std::max(grain_samples, 64) & ~1;
+        if (g != _grain) {
+            _grain = g;
             _init  = false;                     // stagger depends on grain
+            _set_env_rate();
         }
         _align = align_range;
     }
@@ -106,16 +112,31 @@ public:
                 _t[k].rpos   = (double)wpos - _lag0()
                              - (double)_t[k].cursor * (double)_ratio;
             }
+            _ecos = 1.0f; _esin = 0.0f;      // phasor at tap 0's cursor (= 0)
             _init = true;
         }
+
+        // Grain envelope, without a transcendental. It used to be two
+        // std::cos per sample, measured at 32 % of this whole function
+        // (docs/code-evaluation.md, C2) — and on the MOD Dwarf, which has no
+        // vocoder, this function IS the plugin. Two exact substitutions:
+        //
+        //   - tap 0's Hann comes from a unit phasor rotated by 2π/g per
+        //     sample and re-synced to (1,0) at every wrap, so rotation error
+        //     cannot accumulate beyond a single grain (and is ~1e-5 there);
+        //   - tap 1's is EXACTLY 1 - tap 0's, since its cursor is locked half
+        //     a grain ahead and cos(θ+π) = -cos θ. That also makes the
+        //     "envelopes sum to 1" invariant this class rests on exact by
+        //     construction, where two independent cos() only met it to within
+        //     float rounding.
+        static_assert(N_TAPS == 2, "the complement below assumes two taps");
+        const float amp0 = 0.5f * (1.0f - _ecos);
 
         float out = 0.0f;
         for (int k = 0; k < N_TAPS; ++k) {
             Tap& t = _t[k];
 
-            // Complementary Hann: 0.5*(1-cos(2π c/g)); staggered taps sum to 1.
-            const float amp =
-                0.5f * (1.0f - std::cos(6.28318531f * (float)t.cursor / (float)g));
+            const float amp = (k == 0) ? amp0 : 1.0f - amp0;
             out += amp * _read(ring, mask, t.rpos);
 
             t.rpos += (double)_ratio;
@@ -129,11 +150,28 @@ public:
                 t.rpos = anchor;
             }
         }
+
+        // Advance the phasor to the cursor the taps now hold.
+        if (_t[0].cursor == 0) {
+            _ecos = 1.0f; _esin = 0.0f;
+        } else {
+            const float c = _ecos * _ecd - _esin * _esd;
+            _esin = _esin * _ecd + _ecos * _esd;
+            _ecos = c;
+        }
         return out;
     }
 
 private:
     struct Tap { double rpos = 0.0; int cursor = 0; };
+
+    // One grain's worth of angle per sample, as a rotation. Recomputed only
+    // when the grain length changes (a range switch), never per sample.
+    void _set_env_rate() noexcept {
+        const double d = 6.283185307179586 / (double)_grain;
+        _ecd = (float)std::cos(d);
+        _esd = (float)std::sin(d);
+    }
 
     double _lag0() const noexcept {
         return (double)MARGIN + std::max(0.0f, _lag_ratio - 1.0f) * (double)_grain;
@@ -192,7 +230,10 @@ private:
                 e += v * v;
                 p += stride;
             }
-            const float rn = r / std::sqrt(e);
+            // Rank on r·|r|/e rather than r/sqrt(e): same ordering (the map
+            // x -> x·|x| is strictly increasing, and e > 0), one sqrt fewer per
+            // candidate offset — and there are _align/2 of them per respawn.
+            const float rn = r * std::abs(r) / e;
             if (rn > best_r) { best_r = rn; best_d = d; }
         }
         return anchor - (double)best_d;
@@ -201,7 +242,13 @@ private:
     Tap   _t[N_TAPS];
     float _ratio     = 1.0f;   // read speed; may be modulated per block
     float _lag_ratio = 1.0f;   // base ratio + headroom; fixes the lag budget
-    int   _grain = 1200;
+    // 0 so the first setup() always takes the "grain changed" branch and
+    // therefore always primes the envelope rotation below.
+    int   _grain = 0;
     int   _align = 0;
     bool  _init  = false;
+    // Grain-envelope phasor: (_ecos, _esin) sits at tap 0's cursor angle,
+    // (_ecd, _esd) is the per-sample rotation. See process().
+    float _ecos = 1.0f, _esin = 0.0f;
+    float _ecd  = 1.0f, _esd  = 0.0f;
 };

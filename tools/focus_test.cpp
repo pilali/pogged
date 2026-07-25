@@ -82,12 +82,33 @@ int main()
     render(chord, 1.0f, l, r);
     const double voc  = ripple_db(l, (int)SR);
 
-    // 1. The vocoder must land near the ideal floor, and clearly beat granular.
-    const bool clean = (voc - floor_db) < 1.0 && voc < gran - 2.0;
+    // 1. The vocoder must land near the ideal floor, and the granular must
+    //    clearly NOT. Both bounds are relative to the floor on purpose: the
+    //    old form asked for a fixed 2 dB gap between the two engines, which
+    //    silently became an assertion about the GRANULAR engine's quality —
+    //    and it broke the day the granular got better. With the §34 grains a
+    //    hybrid build measures granular 2.4 dB against 4.3 dB before, so the
+    //    gap fell under 2 while the vocoder sat at +0.1 over the floor, i.e.
+    //    the property under test held perfectly and the test failed anyway.
+    //
+    //    The 4096+2048 multi-resolution build puts the vocoder ON the floor.
+    //    A build that PINS a single 2048 window (POGGED_PV_N, the Duo X)
+    //    cannot: 2048 bins are 23.4 Hz and a low triad's partials sit 1.8
+    //    bins apart, measured at +2.3 dB in the stream_vocoder.hpp header.
+    //    That is a documented property of the window, not a regression, so
+    //    the bound follows the window the build actually has.
+#ifdef POGGED_PV_N
+    const double voc_max = 3.0;   // single pinned window; see above
+#else
+    const double voc_max = 1.0;   // multi-resolution: the ideal-shift floor
+#endif
+    const bool clean = (voc - floor_db) < voc_max && (gran - floor_db) > 1.0;
     std::printf("  sub -1 on a chord: ideal floor %.1f | granular %.1f (+%.1f) "
                 "| FOCUS %.1f (+%.1f)  %s\n",
                 floor_db, gran, gran - floor_db, voc, voc - floor_db,
                 clean ? "ok" : "WRONG");
+    std::printf("    (vocoder must sit within %.1f dB of the floor, granular "
+                "above 1.0)\n", voc_max);
     ok &= clean;
 
     // 2. Switching mid-signal must not click. The engines differ by ~82 ms of

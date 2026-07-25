@@ -18,16 +18,47 @@ jobs:
   # Linux: LV2 build + the objective sound-quality regression suite
   # (pitch content, attack swell, level-step clicks — see tools/ and
   # `make audit`).
+  #
+  # Three ENGINES, not one. This used to build plain `make` only, which meant
+  # everything behind POGGED_DYN_FOCUS — the hybrid Focus, the §37 sustain, the
+  # §38 smooth freeze, i.e. the newest code AND the code the VST3/AU actually
+  # ships — was never compiled here, let alone audited. That is how HYBRID=1
+  # came to be broken on both MOD targets while the README advertised it.
+  #
+  # `hybrid` is now what a desktop or Pi build is by default; the two `mod-*`
+  # entries are the engines the MOD boards get (no vocoder / one pinned 2048
+  # window), cross-compiled by mod-plugin-builder in reality but compiled here
+  # for the host so the CODE at least stays alive. The audit runs against each.
   audit-linux:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: hybrid (desktop / Pi default)
+            flags: ""
+          - name: vocoder only (HYBRID=0)
+            flags: "HYBRID=0"
+          - name: mod-dwarf engine (granular only)
+            flags: "TARGET=moddwarf-new CXX=g++"
+          - name: mod-duox engine (pinned 2048 window)
+            flags: "TARGET=modduox-new CXX=g++"
+    name: audit — ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
       - name: Install LV2 headers
         run: sudo apt-get update && sudo apt-get install -y lv2-dev pkg-config
+      # The MOD entries borrow their target's DEFINES but not its -mcpu, which
+      # a host compiler would reject: CXXFLAGS= overrides the per-target base
+      # flags while the feature defines survive as `override +=` in the
+      # Makefile. That is the same property plugins/package/pogged/pogged.mk
+      # relies on, so this exercises it too.
       - name: Build LV2 plugin
-        run: make
+        run: |
+          make ${{ matrix.flags }} \
+            ${{ startsWith(matrix.name, 'mod-') && 'CXXFLAGS="-std=c++17 -O2 -ffast-math -Wall -Wextra -Wno-unused-parameter"' || '' }}
       - name: Sound-quality audit
-        run: make audit
+        run: make audit ${{ matrix.flags }}
 
   macos:
     runs-on: macos-14

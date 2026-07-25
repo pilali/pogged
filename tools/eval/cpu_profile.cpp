@@ -102,13 +102,21 @@ void report_footprint()
     std::printf("  MultiVocoder<4096,2048,8>    %10zu\n", sizeof(MultiVocoder<4096, 2048, 8>));
 #ifndef POGGED_PV_N
     std::printf("  OctaveAnchor<>               %10zu\n", sizeof(OctaveAnchor<>));
-    // pv[] is sized N_VOICES but the two sub slots are never processed — the
-    // subs run on pv_sub[]. Same for the anchors while ANCHOR_MIX is 0.
-    const size_t dead = 2 * sizeof(MultiVocoder<4096, 2048, PV_OS>)
-                      + 2 * sizeof(OctaveAnchor<>);
-    std::printf("  -> allocated but never processed: %zu KiB "
-                "(pv[V_SUB1], pv[V_SUB2], anc[0..1] at ANCHOR_MIX=0)\n",
-                dead / 1024);
+    // What the engine actually holds. pv[] is sized N_VOICES-2, not N_VOICES:
+    // the subs run on pv_sub[], and a Voice-sized array used to carry two
+    // MultiVocoder instances that were never initialised and never processed.
+    // The anchors are absent altogether unless the build asked for them.
+    const size_t live = 6 * sizeof(MultiVocoder<4096, 2048, PV_OS>)   // pv[N_PV]
+                      + 2 * sizeof(MultiVocoder<4096, 2048, 4>);      // pv_sub[2]
+    std::printf("  -> vocoder members live in the engine: %zu KiB "
+                "(6 x pv + 2 x pv_sub)\n", live / 1024);
+#ifdef POGGED_ANCHOR_MIX
+    std::printf("  -> plus %zu KiB of octave anchors (this build set ANCHOR)\n",
+                (2 * sizeof(OctaveAnchor<>)) / 1024);
+#else
+    std::printf("  -> the 2 x %zu KiB of octave anchors are NOT built "
+                "(no ANCHOR= in this build)\n", sizeof(OctaveAnchor<>) / 1024);
+#endif
 #endif
 #endif
     std::printf("\n");
@@ -161,10 +169,11 @@ void run_mode(const char* label, float focus, const std::vector<float>& in,
                 s.worst, 100.0 * s.worst / deadline);
 }
 
-// The granular engine's per-sample cost is dominated by its grain envelope,
-// which is evaluated as two std::cos per sample per voice. The cursor driving
-// it is an INTEGER in [0, grain), so the same values could come from a table.
-// Measure how much of StreamShifter::process that transcendental pair is.
+// The granular engine's grain envelope used to be two std::cos per sample per
+// voice, measured at ~32 % of StreamShifter::process. It is now a rotating
+// phasor plus an exact complement (see stream_shifter.hpp). This keeps timing
+// the transcendental pair beside the real thing, as a standing figure for what
+// putting a std::cos back on the per-sample path would cost.
 void granular_hotspot(double sr)
 {
     const int n = (int)(sr * 20.0);
@@ -194,9 +203,10 @@ void granular_hotspot(double sr)
     const double t_cos = now_us() - a;
     sink = sink + acc;
 
-    std::printf("== granular hot spot (one voice, %d samples) ==\n", n);
+    std::printf("== granular envelope (one voice, %d samples) ==\n", n);
     std::printf("  StreamShifter::process       %8.0f us\n", t_total);
-    std::printf("  the 2 std::cos it contains   %8.0f us  (%.0f%% of it)\n",
+    std::printf("  a std::cos pair, for scale   %8.0f us  (%.0f%% of the above "
+                "— what the phasor replaced)\n",
                 t_cos, 100.0 * t_cos / t_total);
     std::printf("\n");
 }
