@@ -71,9 +71,13 @@ APVTS::ParameterLayout PoggedAudioProcessor::createLayout()
     // answers in 3 ms; the phase vocoder lags ~85 ms but sits on the ideal
     // ripple floor where granular is +4.8 dB above it on a chord. Defaults to
     // the vocoder, as every preset does — a POG is played on chords.
+    // Three-way, matching the LV2 port (0 Granular / 1 Vocoder / 2 Hybrid),
+    // default Hybrid — the editor's Focus segment has GRAN/VOC/HYB and the DSP
+    // (POGGED_DYN_FOCUS, set in CMakeLists) honours all three. A two-choice
+    // param here made HYB unreachable and the Sustain/hybrid features inert.
     p.add(std::make_unique<juce::AudioParameterChoice>(
         pid("focus"), "Focus",
-        juce::StringArray { "Granular (fast)", "Vocoder (clean)" }, 1));
+        juce::StringArray { "Granular (fast)", "Vocoder (clean)", "Hybrid" }, 2));
 
     // Input gain + DRY routing (POG3). The DRY buttons send the dry through
     // each effect; all off = the POG's untouched, undelayed dry.
