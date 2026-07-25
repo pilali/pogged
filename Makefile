@@ -292,6 +292,53 @@ bench: tools/bench_vocoder.cpp $(HEADERS)
 
 .PHONY: bench
 
+# ── Eval: code evaluation workflow ──────────────────────────────────────────
+# `make audit` answers "does it still SOUND right". This answers the other
+# three questions, the ones no test asserts:
+#
+#   1. does every documented build still COMPILE? The Makefile's flags multiply
+#      out into ~20 configurations; `make` builds one of them and CI builds that
+#      same one, so the rest can rot unnoticed. build_matrix.sh compiles the DSP
+#      core under all of them against a known-failures baseline, so a new break
+#      is a failure and a fixed one has to be signed off by editing the list.
+#   2. what IS in here? list_functions.py inventories every function and method,
+#      with the #if guard each sits behind — the guards are where this codebase
+#      keeps its complexity.
+#   3. what does it COST? cpu_profile drives the real pogged_dsp_process() in
+#      host-sized blocks and reports the worst block against the deadline, plus
+#      the static footprint of the vocoder members.
+#
+# 1 and 2 are deterministic and gate CI (.github/workflows/code-eval.yml).
+# 3 is machine-dependent: it is built and run for information, never asserted.
+# Findings from a full pass live in docs/code-evaluation.md.
+EVAL_DIR = build/eval
+
+eval: eval-matrix eval-functions eval-cpu
+	@echo "EVAL OK"
+
+eval-matrix:
+	@echo "══ build matrix ══"
+	@tools/eval/build_matrix.sh
+
+eval-functions:
+	@echo "══ function inventory ══"
+	@python3 tools/eval/list_functions.py src juce | tail -1
+	@mkdir -p docs
+	@python3 tools/eval/list_functions.py --format md src juce \
+	    > docs/function-inventory.md
+	@echo "-> docs/function-inventory.md"
+
+# The profile has to see the flags the shipped binary was built with, so it
+# takes the same CXXFLAGS as the plugin (TARGET=, HYBRID=, ... all apply).
+eval-cpu:
+	@echo "══ CPU profile ══"
+	@mkdir -p $(EVAL_DIR)
+	$(CXX) $(CXXFLAGS) -Isrc tools/eval/cpu_profile.cpp src/pogged_dsp.cpp \
+	    -o $(EVAL_DIR)/cpu_profile $(LDFLAGS)
+	@$(EVAL_DIR)/cpu_profile 64 6
+
+.PHONY: eval eval-matrix eval-functions eval-cpu
+
 install: $(BINARY)
 	install -d $(DESTDIR)/usr/lib/lv2
 	cp -r $(BUNDLE) $(DESTDIR)/usr/lib/lv2/

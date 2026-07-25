@@ -1,0 +1,13 @@
+# Build-matrix configurations that do NOT compile today.
+# tools/eval/build_matrix.sh fails on anything broken that is not listed here,
+# and on anything listed here that has started building — so this file can only
+# shrink, and only on purpose.
+#
+# `make TARGET=moddwarf-new HYBRID=1` and `make TARGET=modduox-new HYBRID=1`.
+# The README says HYBRID "works with any TARGET", but the §37b held-unison
+# member (pv_fund) is declared `SubVocoder`, a type that only exists in the
+# multi-resolution build: POGGED_NO_VOCODER removes it outright, and
+# POGGED_PV_N aliases it to StreamVocoder, which has no long_only().
+# See docs/code-evaluation.md, finding I1.
+moddwarf-new+hybrid
+modduox-new+hybrid

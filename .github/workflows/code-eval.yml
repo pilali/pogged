@@ -1,0 +1,76 @@
+name: code-eval
+
+# The sound-quality audit (build.yml) answers "does it still sound right".
+# This answers "is the code still coherent": does every documented build flag
+# combination compile, what functions exist, and what does a block cost.
+#
+# It deliberately does NOT run on every push to master — it is a review aid,
+# so it runs on pull requests (where the answer changes a decision) and on
+# demand. The CPU profile is informational and never fails the job: a shared
+# GitHub runner is the wrong machine to assert a real-time budget on.
+
+on:
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+  schedule:
+    # Monday 06:00 UTC — catches rot from toolchain updates, not from commits.
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every documented TARGET / HYBRID / XBAND / ANCHOR combination, compiled.
+      # Fails on a config that breaks and is not in tools/eval/known_failures.txt,
+      # and on one listed there that has started building.
+      - name: Build matrix
+        run: tools/eval/build_matrix.sh -v
+
+      # Regenerated, then checked against the committed copy: the inventory is
+      # documentation, and documentation that drifts is worse than none.
+      - name: Function inventory
+        run: |
+          python3 tools/eval/list_functions.py --format md src juce \
+            > /tmp/function-inventory.md
+          if ! diff -u docs/function-inventory.md /tmp/function-inventory.md; then
+            echo "::error::docs/function-inventory.md is stale — run 'make eval-functions' and commit"
+            exit 1
+          fi
+          python3 tools/eval/list_functions.py src juce | tail -1
+
+      # Informational. Two builds, because they are two different plugins: the
+      # default LV2 one and the flag set juce/CMakeLists.txt ships as VST3/AU.
+      - name: CPU profile (LV2 default)
+        continue-on-error: true
+        run: |
+          make eval-cpu 2>&1 | tee /tmp/cpu-lv2.txt
+          { echo '## CPU profile — LV2 default build'; echo '```';
+            cat /tmp/cpu-lv2.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: CPU profile (JUCE / hybrid flags)
+        continue-on-error: true
+        run: |
+          make eval-cpu CXXFLAGS="-std=c++17 -O3 -ffast-math -DPOGGED_DYN_FOCUS \
+            -DPOGGED_GRAIN_UP_MS=12.0f -DPOGGED_GRAIN_PERIODS=3.0f \
+            -DPOGGED_GRAIN_UP_PERIODS=3.0f -DPOGGED_PV_OS=4 \
+            -DPOGGED_HYB_HOLD_MS=100.0f -DPOGGED_HYB_FLOOR=0.0f \
+            -DPOGGED_HYB_SWELL -DPOGGED_FREEZE_SMOOTH" 2>&1 | tee /tmp/cpu-juce.txt
+          { echo '## CPU profile — JUCE / hybrid flags'; echo '```';
+            cat /tmp/cpu-juce.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-eval
+          path: |
+            /tmp/cpu-lv2.txt
+            /tmp/cpu-juce.txt
+            build/eval/matrix/*.log
+          if-no-files-found: ignore

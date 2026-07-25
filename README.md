@@ -87,9 +87,20 @@ the shared-core architecture.
 
 ```sh
 make audit                       # offline DSP regression suite
+make eval                        # code evaluation (build matrix, inventory, CPU)
 npm install && npm run screenshot   # regenerate the modgui store images
 python3 tools/gen_presets.py     # regenerate LV2 preset TTLs + JUCE header
 ```
+
+`make audit` answers "does it still sound right". `make eval` answers the other
+three questions: does every documented build flag combination still compile
+(`tools/eval/build_matrix.sh`, ~20 configurations against a known-failures
+baseline), what functions exist ([`docs/function-inventory.md`](docs/function-inventory.md)),
+and what a block costs against its deadline (`tools/eval/cpu_profile.cpp`, which
+inherits the plugin's own `CXXFLAGS` — so `make eval-cpu TARGET=rpi5 HYBRID=1`
+profiles that build). The findings of a full pass, including the CPU
+optimisations it turned up, are in
+[`docs/code-evaluation.md`](docs/code-evaluation.md).
 
 ---
 
