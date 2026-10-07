@@ -1,5 +1,0 @@
-src/plugin.cpp:7:10: fatal error: lv2/core/lv2.h: No such file or directory
-    7 | #include <lv2/core/lv2.h>
-      |          ^~~~~~~~~~~~~~~~
-compilation terminated.
-make: *** [Makefile:69: pogged.lv2/pogged.so] Error 1

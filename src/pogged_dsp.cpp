@@ -88,15 +88,21 @@ static constexpr float VOC_PRONY_FMIN = 160.0f;
 // §28: how loud the octave-lock anchor sits under the raw sub. It is a
 // work-in-progress (Spike 12): the streaming build currently only nudges the
 // octave (33/36 vs the raw sub's 32) and beats faintly against the raw sub on
-// sustained clean chords — so it ships OFF (0.0f), with zero CPU cost (the
-// anchor's per-sample work is guarded by ANCHOR_MIX > 0 and folded away when
-// it is a zero constant). Build -DPOGGED_ANCHOR_MIX=1.0f to develop/audition
-// it. Open work: sub-Hz f0 (parabolic peak) to stop the beat, stronger
-// detection for the hard notes (weak-fundamental / sub-audible).
-#ifndef POGGED_ANCHOR_MIX
-#define POGGED_ANCHOR_MIX 0.0f
-#endif
+// sustained clean chords — so it ships OFF. Build -DPOGGED_ANCHOR_MIX=1.0f to
+// develop/audition it. Open work: sub-Hz f0 (parabolic peak) to stop the beat,
+// stronger detection for the hard notes (weak-fundamental / sub-audible).
+//
+// Unset, the anchor is not COMPILED IN at all — it used to be built with a zero
+// ANCHOR_MIX, which did fold the per-sample work away but still carried two
+// OctaveAnchor members at 121 KiB each (window, FFT work buffer, bit-reversal
+// table, oscillator grid). That is 242 KiB of an instance's footprint, and real
+// cache pressure on a MOD board, for a feature that is off. The gate below is a
+// macro rather than `if (ANCHOR_MIX > 0)` for exactly that reason: only the
+// preprocessor can remove a member.
+#ifdef POGGED_ANCHOR_MIX
+#define POGGED_HAVE_ANCHOR 1
 static constexpr float ANCHOR_MIX = POGGED_ANCHOR_MIX;
+#endif
 #endif
 #endif
 #include "delay_line.hpp"
@@ -188,6 +194,36 @@ static inline Biquad::Type filter_mode_of(float v) noexcept {
 enum Voice { V_SUB1 = 0, V_SUB2, V_UP5, V_UP1, V_UP2, V_UP1D, V_UP2D,
              V_DRYD,          // detuned copy of the dry (POG3 DRY DETUNE)
              N_VOICES };
+
+// pv_sub[] and anc[] are indexed by the Voice value directly, for the two sub
+// voices only — which is correct exactly as long as those two enumerators ARE
+// 0 and 1. The act[] comment further down says the enum is free to be
+// reordered; this is the one thing that would not survive a reorder silently
+// (it would index a 2-element array out of bounds with no diagnostic), so put
+// the invariant where the compiler enforces it.
+static_assert(V_SUB1 == 0 && V_SUB2 == 1,
+              "pv_sub[] and anc[] index the two sub voices by Voice value");
+
+#ifndef POGGED_NO_VOCODER
+// Which pv[] slot each voice uses — NOT its Voice index. The subs run on
+// pv_sub[] (§27), so a Voice-sized pv[] carried two MultiVocoder instances that
+// were never initialised and never processed: 1.6 MiB of fixed-size member
+// arrays, invisible to an allocation profiler and very visible in RSS and in
+// cache pressure on a MOD board. -1 = this voice has no pv[] slot.
+static constexpr int N_PV = N_VOICES - 2;
+static constexpr int PV_IDX[N_VOICES] = {
+    -1,   // V_SUB1 -> pv_sub[0]
+    -1,   // V_SUB2 -> pv_sub[1]
+     0,   // V_UP5
+     1,   // V_UP1
+     2,   // V_UP2
+     3,   // V_UP1D
+     4,   // V_UP2D
+     5,   // V_DRYD
+};
+static_assert(PV_IDX[V_SUB1] < 0 && PV_IDX[V_SUB2] < 0,
+              "the sub voices must own no pv[] slot");
+#endif
 
 // Perfect fifth, equal-tempered (2^(7/12)) rather than the just 3:2 = 1.5.
 // The voice transposes the whole polyphonic signal, so an ET ratio keeps the
@@ -344,14 +380,15 @@ static constexpr float HYB_RISE_MS = 12.0f;
 static constexpr float HYB_ONSET_SENS = 0.88f;
 static constexpr float HYB_FALL_MS = 8.0f;
 
-// §37 infinite sustain — a runtime feature (the `sustain` / `sustain_ms` ports),
+// §37 infinite sustain — a runtime feature (the single `sustain` port, which
+// carries both the on/off and the release; there is no `sustain_ms` companion),
 // compiled into every POGGED_DYN_FOCUS build and gated at run time. On each
 // attack the note is captured, then once the vocoder body has settled (§37 the
 // SETTLE delay below, past the ~85 ms window latency so the BODY is held, not
 // the attack transient) its spectrum is frozen (§36) and held — smoothly, with a
 // per-partial phase continuation — until the next attack unfreezes it. Works in
 // Vocoder OR Hybrid Focus (a vocoder must be sounding to freeze). The release
-// time comes from the `sustain_ms` port; the top of its range means an endless
+// release time comes from that same port; the top of its range means an endless
 // drone. This is the init default before the first block reads the port.
 #ifndef POGGED_SUSTAIN_REL_MS
 #define POGGED_SUSTAIN_REL_MS 3000.0f
@@ -361,7 +398,7 @@ static constexpr float SUSTAIN_REL_MS = POGGED_SUSTAIN_REL_MS;
 // latency-delayed output has reached the note's BODY (freezing too early held
 // the attack transient — a short, warbly "period"). In Hybrid this also clears
 // the granular attack window; in Vocoder-only it is simply the settle time.
-// sustain_ms == this max means "hold until the next attack, however long".
+// `sustain` == this max means "hold until the next attack, however long".
 #ifndef POGGED_SUSTAIN_SETTLE_MS
 #define POGGED_SUSTAIN_SETTLE_MS 250.0f
 #endif
@@ -412,9 +449,9 @@ struct PoggedDsp {
     StreamShifter sh[N_VOICES];
     bool          sh_live[N_VOICES] = {};   // false ⇒ needs reset before reuse
 #ifndef POGGED_NO_VOCODER
-    PoggedVocoder pv[N_VOICES];      // up voices + dry-detune use these
+    PoggedVocoder pv[N_PV];          // up voices + dry-detune, via PV_IDX
     SubVocoder    pv_sub[2];         // §27: V_SUB1, V_SUB2 — OS=4, bare
-#ifndef POGGED_PV_N
+#ifdef POGGED_HAVE_ANCHOR
     OctaveAnchor<> anc[2];           // §28: octave-lock anchor for V_SUB1/2
     float          anc_out[2] = {};  // this sample's anchor value, per sub voice
 #endif
@@ -639,6 +676,8 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
             // two-window split (for A/B).
             p->pv_sub[v].long_only(true);
 #endif
+#endif
+#ifdef POGGED_HAVE_ANCHOR
             // §28: octave-lock anchor (resynthesised harmonic series on the
             // shifted fundamental) sits UNDER the raw sub to stop the octave
             // wandering when the input fundamental is weak.
@@ -646,10 +685,10 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
 #endif
             continue;
         }
-        p->pv[v].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
-        p->pv[v].set_ratio(VOICE_RATIO[v]);
+        p->pv[PV_IDX[v]].init(sample_rate, v * (PoggedVocoder::HOP / N_VOICES));
+        p->pv[PV_IDX[v]].set_ratio(VOICE_RATIO[v]);
 #ifdef POGGED_DYN_FOCUS
-        p->pv[v].set_hold_release(SUSTAIN_REL_MS);           // §37 init default
+        p->pv[PV_IDX[v]].set_hold_release(SUSTAIN_REL_MS);           // §37 init default
 #endif
 #ifndef POGGED_PV_N
         // §29: the UP-shift voices render from the LONG window only. The §20
@@ -663,10 +702,10 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // the user. V_DRYD (unity, a unison detune) has no shift and keeps the
         // low-latency split. See MultiVocoder::long_only.
 #ifndef POGGED_UP_LONGONLY_OFF
-        if (VOICE_RATIO[v] > 1.05f) p->pv[v].long_only(true);
+        if (VOICE_RATIO[v] > 1.05f) p->pv[PV_IDX[v]].long_only(true);
 #endif
         // Output-side crossover, used only by V_DRYD now (the split path).
-        p->pv[v].set_xover(VOC_XOVER_OUT);
+        p->pv[PV_IDX[v]].set_xover(VOC_XOVER_OUT);
         // §20 frequency smoothing: LONG window only. Measured on the full
         // engine: smoothing the short window is stable-but-MISTUNED on its
         // merged pairs, and that beats against the long window's correct
@@ -674,7 +713,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // removes. The long window's smoothing is free of that (its pairs
         // are at least partially resolved) and cleans the crossover band
         // (34 Hz pair: 37.7 -> 27.6 dB AM).
-        p->pv[v].tune(0.20f, 1.0f);
+        p->pv[PV_IDX[v]].tune(0.20f, 1.0f);
         // §24/§25: the long window's §22 below 160 Hz is gated OFF at the
         // default 250 crossover — the fundamental pair is AT the crossover
         // edge there and §22's frequency wobble leaks through the LP as the
@@ -682,7 +721,7 @@ PoggedDsp* pogged_dsp_new(double sample_rate)
         // in the long window's passband, no longer at the edge, so §22 engages
         // and resolves the 249 midpoint (measured -8.7 -> -28 dB). See the
         // VOC_PRONY_FMIN definition for the two configs.
-        p->pv[v].prony_fmin(VOC_PRONY_FMIN);
+        p->pv[PV_IDX[v]].prony_fmin(VOC_PRONY_FMIN);
         // §26 (the sub input-peak cap) is RETIRED: measured on the user's own
         // signal it removed the F# fold but SMEARED the attack (73 -> 104-170
         // ms rise), because the attack transient is broadband and the cap ate
@@ -738,10 +777,10 @@ void pogged_dsp_reset(PoggedDsp* p)
 #ifndef POGGED_NO_VOCODER
         if (v == V_SUB1 || v == V_SUB2) {
             p->pv_sub[v].reset();
-#ifndef POGGED_PV_N
+#ifdef POGGED_HAVE_ANCHOR
             p->anc[v].reset();
 #endif
-        } else p->pv[v].reset();
+        } else p->pv[PV_IDX[v]].reset();
         p->pv_live[v] = false;
 #endif
     }
@@ -867,7 +906,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         for (int v = 0; v < N_VOICES; ++v) {
             if (v == V_DRYD) continue;
             if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_hold_release(0.0f);
-            else                            p->pv[v].set_hold_release(0.0f);
+            else                            p->pv[PV_IDX[v]].set_hold_release(0.0f);
         }
     } else if (sustain_on) {
         const float sms = std::max(200.0f, sustain_val);
@@ -875,7 +914,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         for (int v = 0; v < N_VOICES; ++v) {
             if (v == V_DRYD) continue;
             if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_hold_release(rel);
-            else                            p->pv[v].set_hold_release(rel);
+            else                            p->pv[PV_IDX[v]].set_hold_release(rel);
         }
         p->pv_fund.set_hold_release(rel);
     }
@@ -920,10 +959,10 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 #ifndef POGGED_NO_VOCODER
         if (v == V_SUB1 || v == V_SUB2) {
             p->pv_sub[v].set_ratio(r);
-#ifndef POGGED_PV_N
+#ifdef POGGED_HAVE_ANCHOR
             p->anc[v].set_ratio(r);
 #endif
-        } else p->pv[v].set_ratio(r);   // translates peaks
+        } else p->pv[PV_IDX[v]].set_ratio(r);   // translates peaks
 #endif
     }
 
@@ -948,9 +987,9 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         p->sh[V_UP2D].set_ratio(r2);
         p->sh[V_DRYD].set_ratio(rd);
 #ifndef POGGED_NO_VOCODER
-        p->pv[V_UP1D].set_ratio(r1);
-        p->pv[V_UP2D].set_ratio(r2);
-        p->pv[V_DRYD].set_ratio(rd);
+        p->pv[PV_IDX[V_UP1D]].set_ratio(r1);
+        p->pv[PV_IDX[V_UP2D]].set_ratio(r2);
+        p->pv[PV_IDX[V_DRYD]].set_ratio(rd);
 #endif
     }
 
@@ -1011,10 +1050,10 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 #ifndef POGGED_NO_VOCODER
             if (v == V_SUB1 || v == V_SUB2) {
                 p->pv_sub[v].reset();
-#ifndef POGGED_PV_N
+#ifdef POGGED_HAVE_ANCHOR
                 p->anc[v].reset();
 #endif
-            } else p->pv[v].reset();   // stale OLA tail
+            } else p->pv[PV_IDX[v]].reset();   // stale OLA tail
 #endif
         }
         p->sh_live[v] = act[v];
@@ -1031,7 +1070,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
     for (int v = 0; v < N_VOICES; ++v) {
         const float sw = (env_on && v != V_DRYD) ? atk_ms : 0.0f;
         if (v == V_SUB1 || v == V_SUB2) p->pv_sub[v].set_swell(sw);
-        else                            p->pv[v].set_swell(sw);
+        else                            p->pv[PV_IDX[v]].set_swell(sw);
     }
 #endif
     // Filter sweep envelope: AD (sustain 0) — it rises on the pick then falls
@@ -1101,15 +1140,13 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
         ++p->wpos;
 
 #ifndef POGGED_NO_VOCODER
-#ifndef POGGED_PV_N
+#ifdef POGGED_HAVE_ANCHOR
         // §28: advance the octave-lock anchors on every input sample (their
         // analysis must stay continuous even when a sub voice is momentarily
-        // silent); voice_raw mixes the result under the raw sub. Guarded so the
-        // whole anchor cost folds away when ANCHOR_MIX is the default 0.
-        if (ANCHOR_MIX > 0.0f) {
-            p->anc_out[0] = p->anc[0].process(src);
-            p->anc_out[1] = p->anc[1].process(src);
-        }
+        // silent); voice_raw mixes the result under the raw sub. The whole
+        // anchor — members included — is absent unless the build asked for it.
+        p->anc_out[0] = p->anc[0].process(src);
+        p->anc_out[1] = p->anc[1].process(src);
 #endif
 #endif
 
@@ -1240,7 +1277,7 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
             for (int vv = 0; vv < N_VOICES; ++vv) {
                 if (vv == V_DRYD) continue;
                 if (vv == V_SUB1 || vv == V_SUB2) p->pv_sub[vv].hold(want_frozen);
-                else                              p->pv[vv].hold(want_frozen);
+                else                              p->pv[PV_IDX[vv]].hold(want_frozen);
             }
             p->pv_fund.hold(want_frozen);   // §37b: the held unison
             p->voc_frozen = want_frozen;
@@ -1273,11 +1310,21 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
 #else
             float s = 0.0f;
 #ifdef POGGED_DYN_FOCUS
-            // §30: g_focus alternates every onset, so BOTH engines must be
-            // advanced every sample — skipping one freezes its streaming state
-            // (OLA / grain taps) and clicks when it resumes. Gain may be 0; the
-            // call must not be.
-            constexpr bool always = true;
+            // §30: in HYBRID (mode 2) g_focus alternates every onset, so BOTH
+            // engines must be advanced every sample — skipping one freezes its
+            // streaming state (OLA / grain taps) and clicks when it resumes.
+            // Gain may be 0; the call must not be.
+            //
+            // Only in mode 2. Modes 0 and 1 have a FIXED target reached through
+            // the slow manual crossfade, exactly as in a static-Focus build, and
+            // the `> 1e-4f` gains below already keep both engines running for
+            // the whole 150 ms fade — which is what covers the vocoder's OLA
+            // refill on a switch. Forcing `always` on them made choosing
+            // Granular cost the full vocoder: measured, six voices, 64-sample
+            // blocks, mean 105 -> 29 us and worst block 380 -> 130 us, with
+            // modes 1 and 2 unchanged (docs/code-evaluation.md, C1). Granular is
+            // precisely the mode a Pi or MOD user picks TO save CPU.
+            const bool always = (fsel >= 1.5f);
 #else
             // Static Focus rests at 0 or 1, so exactly one engine runs at rest.
             constexpr bool always = false;
@@ -1287,13 +1334,13 @@ void pogged_dsp_process(PoggedDsp* p, const PoggedParams* p_,
                 float w;
                 if (v == V_SUB1 || v == V_SUB2) {
                     w = p->pv_sub[v].process(ring, mask, p->wpos);
-#ifndef POGGED_PV_N
+#ifdef POGGED_HAVE_ANCHOR
                     // §28: octave-lock anchor under the raw sub (ge so it swells
                     // with the note like the wet, gated by the vocoder mix fx).
                     w += ge * ANCHOR_MIX * p->anc_out[v];
 #endif
                 } else {
-                    w = p->pv[v].process(ring, mask, p->wpos);
+                    w = p->pv[PV_IDX[v]].process(ring, mask, p->wpos);
                 }
                 s += g_voc * w;
             }

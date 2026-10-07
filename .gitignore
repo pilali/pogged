@@ -3,3 +3,4 @@ juce/build/
 *.so
 *.o
 node_modules/
+build_err.txt
